@@ -1,6 +1,6 @@
 # Vanilla+
 
-**Version:** 0.0.8 Beta 1  
+**Version:** Beta v1.0  
 **Developer:** GiveScottPot  
 **For:** Pokémon Red, Blue and Yellow on Gen1Recomp++  
 **Tested baseline:** Gen1Recomp++ 0.2.10
