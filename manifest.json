@@ -1,0 +1,26 @@
+{
+  "id": "vanillaplus",
+  "name": "Vanilla+ Beta 1",
+  "version": "0.0.8-beta1",
+  "api": 2,
+  "entry": "main.lua",
+  "profile": "content",
+  "category": "TOOL",
+  "game_version": ">=0.2.10 <2.0.0",
+  "games": [
+    "gen1"
+  ],
+  "priority": 110,
+  "permissions": [
+    "engine_internals"
+  ],
+  "dependencies": [],
+  "optional_dependencies": [
+    "overworld_wild_spawns",
+    "dramatic_shape",
+    "potato_voxel"
+  ],
+  "conflicts": [],
+  "affects_link": false,
+  "description": "A spoiler-light Gen I expansion focused on quality-of-life, encounters, field actions, and optional world improvements. Tested on Gen1Recomp++ 0.2.10."
+}
