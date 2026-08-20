@@ -11,12 +11,12 @@ Highlights:
 - Caught-species indicator
 - Optional expanded Red/Blue/Yellow and Yellow-style encounters
 - Persistent Cut trees
+- Adventurer’s Toolkit
 - Additional field-action and travel conveniences
 - Tradeback Evo NPC
 - Additional NPC/world interactions
 - Fighting Dojo trade addition
 - Expanded Professor Oak interactions
-- Optional postgame exploration conveniences
 - Compatibility testing against Gen1Recomp++ 0.2.10, Wilds of Kanto 2.1.8 and Potato Voxel 1.8.2
 
 This public changelog intentionally avoids documenting hidden or unfinished content.

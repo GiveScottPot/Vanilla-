@@ -1,4 +1,4 @@
-# Vanilla+ 0.0.8 Beta 1
+# Vanilla+ Beta v1.0
 
 First public beta.
 

@@ -1,12 +1,16 @@
 # Compatibility
 
-## Tested baseline
+## Current baseline
+
+Vanilla+ Beta v1.0 targets **Gen1Recomp++ 0.2.10+** and ships as a normal importable Gen1Recomp mod ZIP. It does not replace the base application or include a Pokémon ROM.
+
+## Current tested stack
 
 - Gen1Recomp++ 0.2.10
 - Wilds of Kanto 2.1.8
 - Potato Voxel 1.8.2
 
-Vanilla+ has been tested alongside Wilds of Kanto and Potato Voxel on iPhone. Potato Voxel leaves SELECT available during current mobile testing.
+Wilds of Kanto 2.1.8 includes Potato Voxel compatibility support. Current iPhone testing does not show a SELECT-button conflict between Potato Voxel and Vanilla+.
 
 Potato Voxel and Dramatic Shape are alternative voxel renderers and should not be enabled together.
 
@@ -16,4 +20,4 @@ Back up important saves before changing Recomp versions or your mod stack. Durin
 
 ## Reporting compatibility issues
 
-Include your game version, Recomp version, enabled mods and versions, and a screenshot/recording when possible.
+Include your game version, Recomp version, enabled mods and versions, and a screenshot or recording when possible.
