@@ -1,7 +1,7 @@
 {
   "id": "vanillaplus",
-  "name": "Vanilla+ Beta v1.0",
-  "version": "1.0.0-beta",
+  "name": "Vanilla+ Beta v1.1",
+  "version": "1.1.0-beta",
   "api": 2,
   "entry": "main.lua",
   "profile": "content",
@@ -22,5 +22,5 @@
   ],
   "conflicts": [],
   "affects_link": false,
-  "description": "A spoiler-light Gen I expansion focused on quality-of-life, encounters, field actions, and optional world improvements. Tested on Gen1Recomp++ 0.2.10."
+  "description": "A spoiler-light Vanilla+ expansion for Pok\u00e9mon Red, Blue & Yellow on Gen1Recomp++, focused on QoL, expanded encounters, field tools, and new interactions."
 }

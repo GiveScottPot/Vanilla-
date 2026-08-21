@@ -1,13 +1,14 @@
-# Vanilla+ Beta v1.0
+# Vanilla+ Beta v1.1
 
-First public beta.
+Beta v1.1 is a small compatibility and interaction polish update built directly from the public Beta v1.0 release.
 
-This release focuses on the feature set that has already been implemented and tested rather than unfinished systems still in development.
+## Fixed
+- CUT interactions now distinguish grass from trees with the correct dialogue.
+- Indoor furniture and other reused tile IDs no longer incorrectly trigger Surf/Fishing-style field interactions.
+- CUT interaction dialogue now uses Vanilla+'s shared dialogue formatter for cleaner textbox wrapping and pagination.
 
-## Tested baseline
-
-- Gen1Recomp++ 0.2.10
-- Wilds of Kanto 2.1.8
-- Potato Voxel 1.8.2
-
-See the README for installation, feature overview, compatibility notes, and bug-report guidance.
+## Notes
+- No ROM is included.
+- Back up your save before updating.
+- Some Vanilla+ settings may require a full app restart before behavior changes safely.
+- Vanilla+ remains a beta. Compatibility is tested across selected Gen1Recomp++ setups but cannot be guaranteed with every mod combination.

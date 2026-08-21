@@ -1,4 +1,4 @@
--- Vanilla+ 0.0.8-beta1
+-- Vanilla+ 1.1.0-beta
 -- Native-style hidden-stat page for Pokémon summaries.
 -- A/B: Stats -> Hidden Stats -> Moves -> close
 -- SELECT on Hidden Stats: DVs <-> Stat Exp
@@ -1416,25 +1416,37 @@ return function(mod)
     local fx, fy = ev.x, ev.y
 
     local cutState = ow.useCutFieldMove and ow:useCutFieldMove() or "nothing"
-    -- Yellow-style object feedback: a cuttable tree should acknowledge the
-    -- interaction even before the player has CUT/the badge.
+    -- Keep valid grass interaction, but describe grass as grass instead of
+    -- pretending every CUT-compatible tile is a tree.
     local ts = ow.map.def and ow.map.def.tileset
     local tile = ow.map:inBounds(fx,fy) and ow.map:cellTile(fx,fy) or nil
-    local looksCuttable = (ts == "OVERWORLD" and (tile == 0x3d or tile == 0x52))
+    local isGrass = (ts == "OVERWORLD" and tile == 0x52)
+    local isTree = (ts == "OVERWORLD" and tile == 0x3d)
       or (ts == "GYM" and tile == 0x50)
+
     if cutState == "ok" then
       game.stack:push(ActionChoice.new(game, {
         { label = "CUT", action = function() ow:tryCut(fx, fy) end },
         { label = "CANCEL" },
       }))
       return
-    elseif looksCuttable then
+    elseif isGrass then
       local TextBox = require("src.render.TextBox")
-      game.stack:push(TextBox.new(game, "This tree could be\nCUT down!"))
+      game.stack:push(TextBox.new(game, vpFormatDialogue("This grass could be CUT down!")))
+      return
+    elseif isTree then
+      local TextBox = require("src.render.TextBox")
+      game.stack:push(TextBox.new(game, vpFormatDialogue("This tree could be CUT down!")))
       return
     end
 
-    local facingWater = ow.map:inBounds(fx, fy) and ow.map:isWaterCell(fx, fy)
+    -- Map:isWaterCell classifies raw tile IDs. Those IDs are reused by indoor
+    -- tilesets, so furniture can look like water unless we also apply the
+    -- engine's canonical water-tileset gate.
+    local waterTileset = ow.tilesetHasWater and ow:tilesetHasWater() or false
+    local facingWater = waterTileset
+      and ow.map:inBounds(fx, fy)
+      and ow.map:isWaterCell(fx, fy)
     if not facingWater then return end
     local entries = {}
     if ow.useSurfFieldMove and ow:useSurfFieldMove() == "ok" then
@@ -2491,7 +2503,11 @@ return function(mod)
         return
       end
 
-      if ow.map:isWaterCell(fx, fy) then
+      -- Same protection as the normal field-shortcut handler: raw water
+      -- tile IDs are reused by furniture/indoor tiles. Require the map's
+      -- tileset to be one the engine recognizes as water-capable first.
+      local waterTileset = ow.tilesetHasWater and ow:tilesetHasWater() or false
+      if waterTileset and ow.map:isWaterCell(fx, fy) then
         local entries = { { label = "SURFBOARD", action = useSurfboard } }
         local rods = {}
         for _, id in ipairs({ "OLD_ROD", "GOOD_ROD", "SUPER_ROD" }) do

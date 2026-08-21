@@ -1,15 +1,15 @@
 # Vanilla+
 
-**Version:** Beta v1.0  
+**Version:** Beta v1.1  
 **Developer:** GiveScottPot  
 **For:** Pokémon Red, Blue and Yellow on Gen1Recomp++  
 **Tested baseline:** Gen1Recomp++ 0.2.10
 
 Vanilla+ is an ongoing Gen I expansion built to add useful quality-of-life features, restore or broaden parts of Red/Blue/Yellow, and add new interactions without turning the original games into something unrecognizable.
 
-Beta v1.0 focuses on systems that have already been implemented and tested. Larger additions still in development are deliberately not being rushed into this release.
+Beta 1 focuses on systems that have already been implemented and tested. Larger additions still in development are deliberately not being rushed into this release.
 
-## Beta v1.0 features
+## Beta 1 features
 
 - Running Shoes integrated into normal early-game progression
 - Hidden Stats / DV and Stat Experience information
@@ -19,18 +19,18 @@ Beta v1.0 focuses on systems that have already been implemented and tested. Larg
 - Yellow-style encounter options
 - Persistent Cut trees
 - Additional field-action and travel conveniences
-- **Adventurer’s Toolkit:** HM item tools consolidated into one clean package, with SELECT-button capabilities for quick access
 - Tradeback Evo NPC
 - Additional NPC and world interactions
 - Fighting Dojo trade addition
 - Expanded Professor Oak interactions
+- **Adventurer’s Toolkit:** HM item tools consolidated into one clean package, with SELECT-button capabilities for quick access.
 - Individual settings for many Vanilla+ features
 
 Vanilla+ also contains some things that are intentionally left out of the feature list. Exploring Kanto is more fun when the README doesn't explain every surprise first.
 
 ## Installation
 
-Import `VanillaPlus-Beta-v1.0.zip` through the Gen1Recomp++ Mods screen and enable Vanilla+.
+Import the Vanilla+ ZIP through the Gen1Recomp++ Mods screen and enable the mod.
 
 Vanilla+ does **not** contain a Pokémon ROM. You must provide your own compatible game through the normal Gen1Recomp++ setup.
 
@@ -38,7 +38,7 @@ Some settings require a full application restart before their change can safely 
 
 ## Compatibility
 
-Beta v1.0 has been actively tested with:
+Beta 1 has been actively tested with:
 
 - Gen1Recomp++ 0.2.10
 - Wilds of Kanto 2.1.8
