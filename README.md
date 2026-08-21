@@ -82,3 +82,6 @@ Contributions and testing are welcome, particularly in:
 **Platform:** Gen1Recomp / Gen1Recomp++ and their contributors
 
 Vanilla+ is an independent community project and is not affiliated with Nintendo, Game Freak, Creatures, or The Pokémon Company.
+
+## Update support
+- GitHub release tracking is configured for launcher update/version-history support.

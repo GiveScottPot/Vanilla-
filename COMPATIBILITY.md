@@ -1,19 +1,38 @@
 # Compatibility
 
-## Tested baseline
+Vanilla+ is developed for Gen1Recomp++ and supports Pokémon Red, Blue, and Yellow.
 
-- Gen1Recomp++ 0.2.10
-- Wilds of Kanto 2.1.8
-- Potato Voxel 1.8.2
+Compatibility with other mods can vary depending on platform, Gen1Recomp++ version, load order, and whether multiple mods hook the same input or rendering systems.
 
-Vanilla+ has been tested alongside Wilds of Kanto and Potato Voxel on iPhone. Potato Voxel leaves SELECT available during current mobile testing.
+## Tested / Known Compatibility
 
-Potato Voxel and Dramatic Shape are alternative voxel renderers and should not be enabled together.
+### Dramaless Shape Voxel
+**Status:** Working
 
-## Save note
+Dramaless Shape Voxel has been tested alongside Vanilla+ and does not currently interfere with Vanilla+'s SELECT-button functionality.
 
-Back up important saves before changing Recomp versions or your mod stack. During testing of the move to Gen1Recomp++ 0.2.10, vanilla save progress remained usable while some one-time Vanilla+ state could become available again.
+### Wilds of Kanto
+**Status:** Working with a known SELECT-button conflict
 
-## Reporting compatibility issues
+Wilds of Kanto is otherwise compatible with Vanilla+ in current testing, including normal gameplay and world behavior.
 
-Include your game version, Recomp version, enabled mods and versions, and a screenshot/recording when possible.
+However, Wilds currently captures/uses the **SELECT button**, which conflicts with Vanilla+'s SELECT-button functionality, including Adventurer's Toolkit quick access.
+
+Until that input conflict is resolved, players using both mods should expect Vanilla+'s SELECT-based shortcuts to be unavailable or unreliable while Wilds is enabled.
+
+### PotatoVoxel / Dramatic Shape Voxel
+**Status:** Previously tested compatible
+
+These voxel renderers have worked alongside Vanilla+ in prior testing. Do not stack multiple voxel renderers at the same time unless their authors explicitly support doing so.
+
+## Reporting Compatibility Problems
+
+When reporting a compatibility issue, include:
+- Game version: Red, Blue, or Yellow
+- Gen1Recomp++ version
+- Platform
+- Other enabled mods
+- Steps to reproduce
+- Screenshot or recording when possible
+
+Back up important saves before changing Gen1Recomp++ versions or significantly changing your mod stack.
