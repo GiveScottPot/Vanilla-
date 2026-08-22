@@ -1,32 +1,49 @@
 # Vanilla+
 
-**Version:** Beta v1.1  
+**Version:** Beta v1.2.0  
 **Developer:** GiveScottPot  
 **For:** Pokémon Red, Blue and Yellow on Gen1Recomp++  
 **Tested baseline:** Gen1Recomp++ 0.2.10
 
-Vanilla+ is an ongoing Gen I expansion built to add useful quality-of-life features, restore or broaden parts of Red/Blue/Yellow, and add new interactions without turning the original games into something unrecognizable.
+Vanilla+ expands Gen I without trying to replace what makes Red, Blue, and Yellow feel like Gen I. The focus is quality-of-life improvements, broader encounter options, useful world interactions, and additional content that stays close to the original games.
 
-Beta 1 focuses on systems that have already been implemented and tested. Larger additions still in development are deliberately not being rushed into this release.
+Some discoveries are intentionally left out of the documentation. Kanto is more fun when every surprise is not itemized in a README like tax deductions.
 
-## Beta 1 features
+## Beta v1.2.0 features
 
 - Running Shoes integrated into normal early-game progression
 - Hidden Stats / DV and Stat Experience information
 - Battle EXP progress display
 - Caught-species indicator
-- Optional encounter expansions, including Red/Blue/Yellow additions
+- Optional expanded Red / Blue / Yellow encounters
 - Yellow-style encounter options
 - Persistent Cut trees
 - Additional field-action and travel conveniences
 - Tradeback Evo NPC
-- Additional NPC and world interactions
 - Fighting Dojo trade addition
 - Expanded Professor Oak interactions
-- **Adventurer’s Toolkit:** HM item tools consolidated into one clean package, with SELECT-button capabilities for quick access.
+- Additional NPC and world interactions
 - Individual settings for many Vanilla+ features
 
-Vanilla+ also contains some things that are intentionally left out of the feature list. Exploring Kanto is more fun when the README doesn't explain every surprise first.
+### Expanded Adventurer's Toolkit
+
+The Toolkit now serves as a larger utility inventory and can automatically migrate supported items for players who already received it on an older Vanilla+ save.
+
+Toolkit sections:
+
+1. **Field Tools** - Axe, Surfboard, Hot Air Balloon, Flashlight, Crowbar, and related field-use tools
+2. **Laptop**
+3. **Fishing** - Old Rod, Good Rod, Super Rod
+4. **TM/HM Bag** - stores owned TMs/HMs and can sort with SELECT by number, move name, or attack type
+5. **Equipment** - Bicycle, Itemfinder, Poké Flute, Coin Case, Silph Scope, and supported equipment
+6. **Keys & Tickets** - S.S. Ticket, Secret Key, Card Key, Lift Key, and supported access items
+7. **Register** - register Toolkit-compatible shortcuts, including direct TM/HM Bag access
+
+Toolkit-managed items are removed from normal Bag/PC clutter while preserving the underlying ownership/progression state used by the game.
+
+### Reusable TMs
+
+A separate **Reusable TMs** setting is available and defaults to **OFF**. When enabled, successfully taught TMs are retained instead of consumed. HMs remain reusable as normal. The TM/HM Bag itself does not grant or duplicate machines; it only shows what the player actually owns.
 
 ## Installation
 
@@ -36,44 +53,47 @@ Vanilla+ does **not** contain a Pokémon ROM. You must provide your own compatib
 
 Some settings require a full application restart before their change can safely take effect. When a Vanilla+ setting requires this, its description says **Restart required**.
 
+Back up important saves before updating or significantly changing your mod stack.
+
 ## Compatibility
 
-Beta 1 has been actively tested with:
+Known tested/working combinations include:
 
-- Gen1Recomp++ 0.2.10
-- Wilds of Kanto 2.1.8
-- Potato Voxel 1.8.2
+- **Wilds of Kanto 2.1.8:** gameplay compatibility is good in current testing, but Wilds currently captures/uses **SELECT**. This conflicts with Vanilla+'s SELECT shortcuts, including Toolkit quick access and registered shortcuts. Until that input conflict is resolved, expect SELECT-based Vanilla+ shortcuts to be unavailable or unreliable while Wilds is enabled.
+- **Potato Voxel 1.8.2:** tested compatible in prior/current known-good stacks; did not hold SELECT hostage in earlier testing.
+- **Dramaless Shape Voxel 2.0.2:** tested working alongside Vanilla+ and does not currently interfere with SELECT functionality.
+- **Dramatic Shape Voxel:** previously tested compatible in known-good stacks.
+- **Anime Realism 3.2.0:** tested working alongside Vanilla+ on the current development stack.
 
-Current iPhone testing shows Vanilla+ working alongside Wilds of Kanto and Potato Voxel, including use of SELECT with Potato Voxel.
+Do not stack multiple voxel renderers unless their authors explicitly support doing so. Compatibility is tested, not guaranteed across every platform, version, save, or mod combination. See `docs/COMPATIBILITY.md` for details.
 
-Potato Voxel and Dramatic Shape are alternative voxel renderers and should not be enabled together.
+## Beta testing / support
 
-Compatibility testing cannot cover every device, save, game version, or mod combination. Bug reports involving unusual combinations are useful.
-
-## Beta testing
-
-This is a public beta. Reports are especially useful when they include:
+Reports are most useful when they include:
 
 - Red, Blue, or Yellow
 - Gen1Recomp++ version
-- Other enabled mods and their versions
+- Platform/device
+- Other enabled mods and versions
 - What happened and what you expected
 - Whether the issue survives a full app restart
-- A screenshot or recording when possible
+- Screenshot or recording when possible
 
-Existing saves are supported where practical, but major Recomp/mod-persistence changes can cause some one-time Vanilla+ events to become available again. Back up important saves before changing your mod stack.
+Existing saves are supported where practical. The v1.2.0 Toolkit update includes automatic migration for supported Toolkit-owned items so players who already received the Toolkit do not have to reacquire it.
 
 ## Contributing
 
 Vanilla+ has been designed, implemented, tested, and iterated through an AI-assisted workflow performed entirely from an iPhone. GiveScottPot directs the project and performs the on-device design/QA loop, with OpenAI ChatGPT assisting with implementation and code analysis.
 
-Contributions and testing are welcome, particularly in:
+Help is still very welcome, particularly with:
 
 - Gen1Recomp / Lua development
 - Gen I map and event work
 - Pixel art and sprite work
-- Red / Blue / Yellow compatibility testing
-- Compatibility testing with other Recomp mods
+- Red / Blue / Yellow testing
+- Android / Windows / iOS compatibility testing
+- Testing alongside other Recomp mods
+- Bug reports, recordings, and reproduction steps
 
 ## Credits
 
@@ -84,4 +104,5 @@ Contributions and testing are welcome, particularly in:
 Vanilla+ is an independent community project and is not affiliated with Nintendo, Game Freak, Creatures, or The Pokémon Company.
 
 ## Update support
-- GitHub release tracking is configured for launcher update/version-history support.
+
+GitHub release tracking is configured for launcher update/version-history support.

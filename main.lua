@@ -1,4 +1,4 @@
--- Vanilla+ 1.1.0-beta
+-- Vanilla+ 1.2.0
 -- Native-style hidden-stat page for Pokémon summaries.
 -- A/B: Stats -> Hidden Stats -> Moves -> close
 -- SELECT on Hidden Stats: DVs <-> Stat Exp
@@ -118,6 +118,14 @@ return function(mod)
       help = "Shows the taught move in every TM name, such as TM24 THUNDERBOLT, in the Bag and PC.",
     },
     {
+      key = "reusable_tms",
+      label = "REUSABLE TMS",
+      type = "toggle",
+      default = false,
+      description = "Makes TMs reusable after a successful teach. HMs remain reusable as normal.",
+      help = "Makes TMs reusable after a successful teach. HMs remain reusable as normal.",
+    },
+    {
       key = "permanent_cut_trees",
       label = "PERMANENT CUT TREES",
       type = "toggle",
@@ -150,15 +158,6 @@ return function(mod)
       help = "Gives PROF.OAK additional dialogue after major Pokedex progress.",
     },
   })
-
-  -- Vanilla+ original overworld sprite assets -------------------------------
-  -- Registered through the documented sprites registry so our NPC art is a
-  -- normal Recomp field sprite, not an ad-hoc renderer. Wilds can still
-  -- reskin species entities after spawn through its own refresh API.
-  -- DIAG27: species-correct custom overworld art remains deferred. The prior
-  -- 16x48 test assets rendered as malformed humanoid fragments. For Beta 1,
-  -- Chansey/Mr. Mime intentionally use Recomp's safe classic monster fallback;
-  -- proper species sprites remain a documented Coming Soon visual upgrade.
 
   -- Vanilla+ option help ----------------------------------------------------
   do
@@ -616,6 +615,8 @@ return function(mod)
     if #pages == 0 then return "" end
     return table.concat(pages, "\f")
   end
+
+
 
 
   -- TELEPORT anywhere: add TELEPORT to the party submenu indoors instead of
@@ -2120,52 +2121,102 @@ return function(mod)
       gameRef.stack:push(TextBox.new(gameRef, msg, done))
     end
 
-    -- Post-Champion equipment consolidation.  The original key-item ownership
-    -- remains mirrored in save.inventory so vanilla scripts (Cycling Road,
-    -- Snorlax, etc.) still see the items.  Vanilla+ hides consolidated gear
-    -- from Bag/PC presentation and excludes it from bag slot counts, while
-    -- persistent mod flags drive the Toolkit hub.
+    -- Post-Champion Toolkit consolidation. Vanilla scripts keep their real
+    -- ownership state in save.inventory; Vanilla+ removes Toolkit-managed
+    -- gear, access items, and machines from normal Bag/PC presentation.
+    -- This lets old saves migrate automatically without duplicating items.
+    local TOOLKIT_FISHING_ITEMS = {
+      "OLD_ROD", "GOOD_ROD", "SUPER_ROD",
+    }
+    local TOOLKIT_EQUIPMENT_ITEMS = {
+      "BICYCLE", "ITEMFINDER", "POKE_FLUTE", "COIN_CASE", "SILPH_SCOPE",
+    }
+    local TOOLKIT_KEY_ITEMS = {
+      "S_S_TICKET", "SECRET_KEY", "CARD_KEY", "LIFT_KEY",
+    }
     local CONSOLIDATABLE_KEY_ITEMS = {
       "BICYCLE", "OLD_ROD", "GOOD_ROD", "SUPER_ROD",
-      "ITEMFINDER", "POKE_FLUTE",
+      "ITEMFINDER", "POKE_FLUTE", "COIN_CASE", "SILPH_SCOPE",
+      "S_S_TICKET", "SECRET_KEY", "CARD_KEY", "LIFT_KEY",
     }
+    local TOOLKIT_FISHING_SET, TOOLKIT_EQUIPMENT_SET, TOOLKIT_KEY_SET = {}, {}, {}
+    for _, id in ipairs(TOOLKIT_FISHING_ITEMS) do TOOLKIT_FISHING_SET[id] = true end
+    for _, id in ipairs(TOOLKIT_EQUIPMENT_ITEMS) do TOOLKIT_EQUIPMENT_SET[id] = true end
+    for _, id in ipairs(TOOLKIT_KEY_ITEMS) do TOOLKIT_KEY_SET[id] = true end
+
     local KEY_LABEL = {
       BICYCLE = "BICYCLE", OLD_ROD = "OLD ROD", GOOD_ROD = "GOOD ROD",
       SUPER_ROD = "SUPER ROD", ITEMFINDER = "ITEMFINDER",
-      POKE_FLUTE = "POKe FLUTE",
-      [LAPTOP_ID] = "LAPTOP",
+      POKE_FLUTE = "POKe FLUTE", COIN_CASE = "COIN CASE",
+      SILPH_SCOPE = "SILPH SCOPE", S_S_TICKET = "S.S.TICKET",
+      SECRET_KEY = "SECRET KEY", CARD_KEY = "CARD KEY",
+      LIFT_KEY = "LIFT KEY", [LAPTOP_ID] = "LAPTOP",
+      TM_HM_BAG = "TM/HM BAG",
     }
     local function toolkitKeyFlag(id) return "toolkit_key_" .. id .. "_v1" end
     local function toolkitOwns(id) return mod.save:get(toolkitKeyFlag(id)) == true end
+    local function isMachineItem(g, id)
+      local def = g and g.data and g.data.items and g.data.items[id]
+      return type(def) == "table" and type(def.machine) == "table"
+    end
+    local function toolkitStoredItem(g, id)
+      return TOOLKIT_FISHING_SET[id] or TOOLKIT_EQUIPMENT_SET[id] or TOOLKIT_KEY_SET[id] or isMachineItem(g, id)
+    end
+
 
     local function consolidateOwnedKeyItems(g)
       if not (g and g.save and mod.save:get("toolkit_received_v1")) then return 0 end
       g.save.inventory = g.save.inventory or {}
       g.save.pcItems = g.save.pcItems or {}
       local moved = 0
+
+      -- Move Toolkit equipment / access items out of PC storage while keeping
+      -- the vanilla inventory ownership mirror scripts already understand.
       for _, id in ipairs(CONSOLIDATABLE_KEY_ITEMS) do
-        local inBag = (g.save.inventory[id] or 0) > 0
-        local inPC = (g.save.pcItems[id] or 0) > 0
-        if inBag or inPC then
+        local bagQty = g.save.inventory[id] or 0
+        local pcQty = g.save.pcItems[id] or 0
+        if bagQty > 0 or pcQty > 0 then
           if not toolkitOwns(id) then moved = moved + 1 end
           mod.save:set(toolkitKeyFlag(id), true)
-          -- Keep a hidden ownership mirror in inventory for vanilla event
-          -- checks; move any PC copy into that mirror and free the PC slot.
-          g.save.inventory[id] = math.max(1, g.save.inventory[id] or 0)
+          g.save.inventory[id] = math.min(99, math.max(1, bagQty + pcQty))
           g.save.pcItems[id] = nil
+        elseif TOOLKIT_KEY_SET[id] then
+          -- Access items can genuinely be consumed/removed by story scripts
+          -- (notably the S.S.TICKET), so never leave a stale Toolkit copy.
+          mod.save:set(toolkitKeyFlag(id), false)
+        end
+      end
+
+      -- Machines belong to the TM/HM Bag once the Toolkit exists. Preserve
+      -- actual quantities and merge any PC copies so old saves upgrade cleanly.
+      local machineIds = {}
+      for id in pairs(g.save.pcItems) do
+        if isMachineItem(g, id) then machineIds[id] = true end
+      end
+      for id in pairs(g.save.inventory) do
+        if isMachineItem(g, id) then machineIds[id] = true end
+      end
+      for id in pairs(machineIds) do
+        local bagQty = g.save.inventory[id] or 0
+        local pcQty = g.save.pcItems[id] or 0
+        if pcQty > 0 then
+          g.save.inventory[id] = math.min(99, bagQty + pcQty)
+          g.save.pcItems[id] = nil
+          moved = moved + 1
         end
       end
       return moved
     end
+
 
     local function withConsolidatedInventoryHidden(g, fn)
       if not (g and g.save and mod.save:get("toolkit_received_v1")) then
         return fn()
       end
       local inv, held = g.save.inventory or {}, {}
-      for _, id in ipairs(CONSOLIDATABLE_KEY_ITEMS) do
-        if toolkitOwns(id) and inv[id] then
-          held[id] = inv[id]
+      for id, qty in pairs(inv) do
+        if toolkitStoredItem(g, id) then
+          held[id] = qty
           inv[id] = nil
         end
       end
@@ -2319,6 +2370,7 @@ return function(mod)
     end
 
     local openToolkit
+    local openTMHMBag
 
     local function showPayload(payload, done)
       if type(payload) == "table" then payload = table.concat(payload, "\f") end
@@ -2329,6 +2381,7 @@ return function(mod)
       local ow = gameRef and gameRef.overworld
       if not ow then return end
       if id == TOOLKIT_ID then return openToolkit() end
+      if id == "TM_HM_BAG" then return openTMHMBag() end
       if id == LAPTOP_ID then
         closeMenusToOverworld(ow)
         if ow.openPC then return ow:openPC() end
@@ -2382,29 +2435,23 @@ return function(mod)
         end
         return showPayload(payload)
       end
+
+      if id == "COIN_CASE" then
+        return show("Coin count:\n" .. tostring((gameRef.save and gameRef.save.coins) or 0))
+      end
+
+      if id == "SILPH_SCOPE" then
+        return show("The SILPH SCOPE is\nready for use.")
+      end
     end
 
     local function registerKeyItem(id)
-      if id ~= TOOLKIT_ID and id ~= LAPTOP_ID and not toolkitOwns(id) then
+      if id ~= TOOLKIT_ID and id ~= LAPTOP_ID and id ~= "TM_HM_BAG" and not toolkitOwns(id) then
         return show("That item isn't in\nthe TOOLKIT.")
       end
       mod.save:set("registered_key_item_v1", id)
       local label = id == TOOLKIT_ID and "TOOLKIT" or (KEY_LABEL[id] or id)
       show(vpFormatDialogue(label .. " was registered!\fPress SELECT in the overworld to use it.\fHold SELECT in the overworld to reopen REGISTER."))
-    end
-
-    local function openFishingGear()
-      local rows = {}
-      for _, id in ipairs({ "OLD_ROD", "GOOD_ROD", "SUPER_ROD" }) do
-        if toolkitOwns(id) then
-          local itemId = id
-          rows[#rows + 1] = { label = KEY_LABEL[itemId],
-            onSelect = function() useStoredKeyItem(itemId) end }
-        end
-      end
-      if #rows == 0 then return show("No fishing rods are\nstored in the TOOLKIT.") end
-      rows[#rows + 1] = { label = "CANCEL" }
-      gameRef.stack:push(Menu.new(gameRef, rows, { tx = 2, ty = 1, tw = 16 }))
     end
 
     local function openFieldTools()
@@ -2418,49 +2465,241 @@ return function(mod)
       }, { tx = 2, ty = 1, tw = 16 }))
     end
 
-    local function openEquipment()
+    local function openFishingGear()
+      consolidateOwnedKeyItems(gameRef)
       local rows = {}
-      if toolkitOwns("BICYCLE") then
-        rows[#rows + 1] = { label = "BICYCLE", onSelect = function() useStoredKeyItem("BICYCLE") end }
+      for _, id in ipairs(TOOLKIT_FISHING_ITEMS) do
+        if toolkitOwns(id) and gameRef.save.inventory[id] then
+          local itemId = id
+          rows[#rows + 1] = { label = KEY_LABEL[itemId] or itemId,
+            onSelect = function() useStoredKeyItem(itemId) end }
+        end
       end
-      if toolkitOwns("ITEMFINDER") then
-        rows[#rows + 1] = { label = "ITEMFINDER", onSelect = function() useStoredKeyItem("ITEMFINDER") end }
-      end
-      if toolkitOwns("POKE_FLUTE") then
-        rows[#rows + 1] = { label = "POKe FLUTE", onSelect = function() useStoredKeyItem("POKE_FLUTE") end }
-      end
-      if #rows == 0 then return show("No extra equipment is\nstored in the TOOLKIT.") end
+      if #rows == 0 then return show("No fishing gear is\nstored in the TOOLKIT.") end
       rows[#rows + 1] = { label = "CANCEL" }
-      gameRef.stack:push(Menu.new(gameRef, rows, { tx = 2, ty = 1, tw = 16 }))
+      gameRef.stack:push(Menu.new(gameRef, rows, { tx = 2, ty = 1, tw = 16, maxVisible = 7 }))
+    end
+
+    local function openEquipment()
+      consolidateOwnedKeyItems(gameRef)
+      local rows = {}
+      for _, id in ipairs(TOOLKIT_EQUIPMENT_ITEMS) do
+        if toolkitOwns(id) and gameRef.save.inventory[id] then
+          local itemId = id
+          rows[#rows + 1] = { label = KEY_LABEL[itemId] or itemId,
+            onSelect = function() useStoredKeyItem(itemId) end }
+        end
+      end
+      if #rows == 0 then return show("No equipment is\nstored in the TOOLKIT.") end
+      rows[#rows + 1] = { label = "CANCEL" }
+      gameRef.stack:push(Menu.new(gameRef, rows, { tx = 2, ty = 1, tw = 16, maxVisible = 7 }))
+    end
+
+    local function openKeysBox()
+      consolidateOwnedKeyItems(gameRef)
+      local rows = {}
+      for _, id in ipairs(TOOLKIT_KEY_ITEMS) do
+        if gameRef.save.inventory[id] and gameRef.save.inventory[id] > 0 then
+          local itemId = id
+          rows[#rows + 1] = { label = KEY_LABEL[itemId] or itemId, keepOpen = true,
+            onSelect = function()
+              show((KEY_LABEL[itemId] or itemId) .. " is stored\nin the KEYS BOX.")
+            end }
+        end
+      end
+      if #rows == 0 then return show("No keys or passes are\nstored in the KEYS BOX.") end
+      rows[#rows + 1] = { label = "CANCEL" }
+      gameRef.stack:push(Menu.new(gameRef, rows, { tx = 2, ty = 1, tw = 16, maxVisible = 7 }))
+    end
+
+    local TOOLKIT_TM_MOVES = {
+      "MEGA PUNCH","RAZOR WIND","SWORDS DANCE","WHIRLWIND","MEGA KICK",
+      "TOXIC","HORN DRILL","BODY SLAM","TAKE DOWN","DOUBLE-EDGE",
+      "BUBBLEBEAM","WATER GUN","ICE BEAM","BLIZZARD","HYPER BEAM",
+      "PAY DAY","SUBMISSION","COUNTER","SEISMIC TOSS","RAGE",
+      "MEGA DRAIN","SOLARBEAM","DRAGON RAGE","THUNDERBOLT","THUNDER",
+      "EARTHQUAKE","FISSURE","DIG","PSYCHIC","TELEPORT",
+      "MIMIC","DOUBLE TEAM","REFLECT","BIDE","METRONOME",
+      "SELFDESTRUCT","EGG BOMB","FIRE BLAST","SWIFT","SKULL BASH",
+      "SOFTBOILED","DREAM EATER","SKY ATTACK","REST","THUNDER WAVE",
+      "PSYWAVE","EXPLOSION","ROCK SLIDE","TRI ATTACK","SUBSTITUTE",
+    }
+    local TOOLKIT_TM_NUMBER = {}
+    local function toolkitMachineKey(v)
+      return tostring(v or ""):upper():gsub("[^A-Z0-9]", "")
+    end
+    for n, name in ipairs(TOOLKIT_TM_MOVES) do TOOLKIT_TM_NUMBER[toolkitMachineKey(name)] = n end
+    local TOOLKIT_HM_NUMBER = { CUT = 1, FLY = 2, SURF = 3, STRENGTH = 4, FLASH = 5 }
+
+    local openingToolkitMachineBag = false
+    local function machineMeta(id)
+      local def = gameRef and gameRef.data and gameRef.data.items and gameRef.data.items[id]
+      local moveId = def and def.machine and def.machine.move
+      local move = moveId and gameRef.data.moves and gameRef.data.moves[moveId]
+      local moveName = (move and move.name) or tostring(moveId or id):gsub("_", " ")
+      local key = toolkitMachineKey(moveName)
+      local kind = def and def.machine and def.machine.kind or "TM"
+      local num = kind == "HM" and TOOLKIT_HM_NUMBER[key] or TOOLKIT_TM_NUMBER[key]
+      return { id = id, kind = kind, num = num or 999, move = moveName,
+        type = tostring((move and move.type) or "UNKNOWN") }
+    end
+
+    local function sortMachineRows(rows, mode)
+      table.sort(rows, function(a, b)
+        local ma, mb = machineMeta(a.value), machineMeta(b.value)
+        if mode == "ALPHA" then
+          if ma.move ~= mb.move then return ma.move < mb.move end
+        elseif mode == "TYPE" then
+          if ma.type ~= mb.type then return ma.type < mb.type end
+          if ma.move ~= mb.move then return ma.move < mb.move end
+        else
+          if ma.kind ~= mb.kind then return ma.kind == "TM" end
+          if ma.num ~= mb.num then return ma.num < mb.num end
+        end
+        return ma.id < mb.id
+      end)
+    end
+
+    openTMHMBag = function()
+      local g = gameRef
+      if not (g and g.save and g.data) then return end
+      consolidateOwnedKeyItems(g)
+      local hasMachine = false
+      for id, qty in pairs(g.save.inventory or {}) do
+        if qty > 0 and isMachineItem(g, id) then hasMachine = true break end
+      end
+      if not hasMachine then return show("No TMs or HMs are\nin the TM/HM BAG.") end
+
+      -- Reuse Recomp's complete native TM/HM teaching flow. For the lifetime
+      -- of this screen only, hide every non-machine inventory row so its own
+      -- refreshes remain a pure TM/HM list after a teach/consume operation.
+      local inv = g.save.inventory
+      local held = {}
+      for id, qty in pairs(inv) do
+        if not isMachineItem(g, id) then held[id] = qty; inv[id] = nil end
+      end
+      local oldOrder = {}
+      for i, id in ipairs(g.save.bagOrder or {}) do oldOrder[i] = id end
+
+      openingToolkitMachineBag = true
+      local BagMenu = require("src.ui.BagMenu")
+      local list = BagMenu.new(g, {})
+      openingToolkitMachineBag = false
+
+      local restored = false
+      local function restoreInventory()
+        if restored then return end
+        restored = true
+        for id, qty in pairs(held) do inv[id] = qty end
+        g.save.bagOrder = oldOrder
+        Bag.order(g.save, g.data) -- prune consumed machines / append anything new
+      end
+      local previousClose = list.close
+      function list:close(...)
+        restoreInventory()
+        return previousClose(self, ...)
+      end
+      local previousCancel = list.onCancel
+      list.onCancel = function(...)
+        restoreInventory()
+        if previousCancel then return previousCancel(...) end
+      end
+
+      local modes = { "NUM", "ALPHA", "TYPE" }
+      local mode = mod.save:get("toolkit_tm_sort_v1") or "NUM"
+      local function normalizeMode()
+        for _, m in ipairs(modes) do if mode == m then return end end
+        mode = "NUM"
+      end
+      normalizeMode()
+      local function applySort()
+        local selected = list.items[list.index] and list.items[list.index].value
+        sortMachineRows(list.items, mode)
+        if selected then
+          for i, row in ipairs(list.items) do
+            if row.value == selected then list.index = i break end
+          end
+        end
+        list.index = math.max(1, math.min(list.index, math.max(1, #list.items)))
+        list.title = "TM/HM BAG " .. mode
+        list.footer = "SELECT: SORT"
+      end
+      list.onSelectKey = function(_, l)
+        local idx = 1
+        for i, m in ipairs(modes) do if m == mode then idx = i break end end
+        mode = modes[(idx % #modes) + 1]
+        mod.save:set("toolkit_tm_sort_v1", mode)
+        applySort()
+      end
+      local previousUpdate = list.update
+      function list:update(dt)
+        applySort()
+        return previousUpdate(self, dt)
+      end
+      applySort()
+      g.stack:push(list)
     end
 
     local function openRegisterMenu()
       local rows = {
         { label = "TOOLKIT", onSelect = function() registerKeyItem(TOOLKIT_ID) end },
         { label = "LAPTOP", onSelect = function() registerKeyItem(LAPTOP_ID) end },
+        { label = "TM/HM BAG", onSelect = function() registerKeyItem("TM_HM_BAG") end },
       }
-      for _, id in ipairs(CONSOLIDATABLE_KEY_ITEMS) do
-        if toolkitOwns(id) then
-          local itemId = id
-          rows[#rows + 1] = { label = KEY_LABEL[itemId] or itemId,
-            onSelect = function() registerKeyItem(itemId) end }
+      for _, group in ipairs({ TOOLKIT_FISHING_ITEMS, TOOLKIT_EQUIPMENT_ITEMS }) do
+        for _, id in ipairs(group) do
+          if toolkitOwns(id) and gameRef.save.inventory[id] then
+            local itemId = id
+            rows[#rows + 1] = { label = KEY_LABEL[itemId] or itemId,
+              onSelect = function() registerKeyItem(itemId) end }
+          end
         end
       end
       rows[#rows + 1] = { label = "CANCEL" }
       gameRef.stack:push(Menu.new(gameRef, rows, { tx = 2, ty = 1, tw = 16, maxVisible = 6 }))
     end
 
+
     openToolkit = function()
       if not gameRef then return end
       consolidateOwnedKeyItems(gameRef)
-      gameRef.stack:push(Menu.new(gameRef, {
+      local toolkitMenu = Menu.new(gameRef, {
         { label = "FIELD TOOLS", onSelect = openFieldTools },
-        { label = "FISHING GEAR", onSelect = openFishingGear },
-        { label = "EQUIPMENT", onSelect = openEquipment },
         { label = "LAPTOP", onSelect = function() useStoredKeyItem(LAPTOP_ID) end },
+        { label = "FISHING", onSelect = openFishingGear },
+        { label = "TM/HM BAG", onSelect = openTMHMBag },
+        { label = "EQUIPMENT", onSelect = openEquipment },
+        { label = "KEYS & TICKETS", onSelect = openKeysBox },
         { label = "REGISTER", onSelect = openRegisterMenu },
         { label = "CANCEL" },
-      }, { tx = 2, ty = 2, tw = 16 }))
+      }, { tx = 2, ty = 0, tw = 16, th = 18 })
+
+      -- Gen I's stock tile font has no ampersand glyph, so Font.draw leaves
+      -- the '&' cell blank. Keep the intended label and draw a tiny matching
+      -- pixel ampersand into that one cell rather than renaming the menu row.
+      local previousToolkitDraw = toolkitMenu.draw
+      function toolkitMenu:draw(...)
+        previousToolkitDraw(self, ...)
+        local visible = #self.items
+        local row = 6 -- KEYS & TICKETS
+        local x = (self.tx + 2 + 5) * 8
+        local y = (self.ty + self.th - 2 - (visible - row) * self.rowStep) * 8
+        local pixels = {
+          {1,0},{2,0},
+          {0,1},{3,1},
+          {0,2},{2,2},
+          {1,3},{2,3},
+          {0,4},{2,4},{4,4},
+          {0,5},{3,5},
+          {1,6},{2,6},{4,6},
+        }
+        love.graphics.setColor(0, 0, 0, 1)
+        for _, px in ipairs(pixels) do
+          love.graphics.rectangle("fill", x + px[1], y + px[2], 1, 1)
+        end
+        love.graphics.setColor(1, 1, 1, 1)
+      end
+      gameRef.stack:push(toolkitMenu)
     end
 
     -- Once owned, the Toolkit participates in normal A-button context actions
@@ -2552,6 +2791,7 @@ return function(mod)
         BagMenu._vanillaPlusToolkitConsolidationWrapped = true
         local previousBagNew = BagMenu.new
         function BagMenu.new(g, opts)
+          if openingToolkitMachineBag then return previousBagNew(g, opts) end
           return withConsolidatedInventoryHidden(g, function()
             return previousBagNew(g, opts)
           end)
@@ -2577,7 +2817,7 @@ return function(mod)
                 local filtered = {}
                 for _, item in ipairs(items or {}) do
                   local id = item and item.value
-                  if not (id and toolkitOwns(id)) then filtered[#filtered + 1] = item end
+                  if not (id and toolkitStoredItem(game, id)) then filtered[#filtered + 1] = item end
                 end
                 items = filtered
               end
@@ -2593,8 +2833,9 @@ return function(mod)
         function Bag.slots(save, data, pocket)
           local n = previousSlots(save, data, pocket)
           if mod.save:get("toolkit_received_v1") and save and save.inventory then
-            for _, id in ipairs(CONSOLIDATABLE_KEY_ITEMS) do
-              if toolkitOwns(id) and save.inventory[id]
+            for id in pairs(save.inventory) do
+              local g = gameRef
+              if toolkitStoredItem(g, id)
                 and (not pocket or Bag.pocketOf(id, data) == pocket) then
                 n = math.max(0, n - 1)
               end
@@ -2642,7 +2883,13 @@ return function(mod)
           openToolkit()
           return "kept", nil
         end
-        return originalUse(data, save, itemId, target, battle, moveIndex, ow)
+        local result, payload, extra = originalUse(data, save, itemId, target, battle, moveIndex, ow)
+        local def = data and data.items and data.items[itemId]
+        if mod.options:get("reusable_tms") and result == "learn"
+          and def and def.machine and def.machine.kind == "TM" then
+          result = "learnkept"
+        end
+        return result, payload, extra
       end
     end
 
@@ -2854,19 +3101,6 @@ return function(mod)
         -- HOTFIX4-DIAG10: darkness/lighting is handled in drawWorld below.
         -- Keep this outer draw wrapper only for the Toolkit's other cosmetic FX.
 
-        if surfboardActive and p.surfing then
-          self._vpSurfboardImage = self._vpSurfboardImage or love.graphics.newImage(mod.assets:path("assets/vp_surfboard.png"))
-          self._vpSurfboardImage:setFilter("nearest", "nearest")
-          love.graphics.setColor(1, 1, 1, 1)
-          love.graphics.draw(self._vpSurfboardImage, px - 12, py + 4)
-        end
-
-        if balloonActive and self.flyAnim then
-          self._vpBalloonImage = self._vpBalloonImage or love.graphics.newImage(mod.assets:path("assets/vp_balloon.png"))
-          self._vpBalloonImage:setFilter("nearest", "nearest")
-          love.graphics.setColor(1, 1, 1, 1)
-          love.graphics.draw(self._vpBalloonImage, px - 14, py - 32)
-        end
 
         if toolkitVisual.frames > 0 then
           toolkitVisual.frames = toolkitVisual.frames - 1

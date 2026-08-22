@@ -1,11 +1,25 @@
-## Beta v1.1
-- Valid grass interaction now uses grass-specific CUT wording.
+# Vanilla+ Changelog
+
+## Beta v1.2.0
+
+- Expanded the Adventurer's Toolkit into Field Tools, Laptop, Fishing, TM/HM Bag, Equipment, Keys & Tickets, and Register sections.
+- Added automatic Toolkit migration for existing save files.
+- Added TM/HM Bag with SELECT sorting by number, move name, or attack type.
+- Added TM/HM Bag to the Register pool for direct SELECT access.
+- Added toggleable Reusable TMs option, default OFF.
+- Added Coin Case and Silph Scope to Equipment storage.
+- Added S.S. Ticket, Secret Key, Card Key, and Lift Key to Keys & Tickets storage.
+- Restored fishing rods to a dedicated Fishing menu.
+- Updated Toolkit menu layout to fit the expanded eight-option menu cleanly.
+- Added visible `&` rendering for **KEYS & TICKETS** despite the stock Gen I menu font lacking the glyph.
+
+## Beta v1.1.0
+
+- CUT interactions distinguish grass from trees with the correct dialogue.
 - Indoor/furniture false Surf/Fishing prompts are blocked by tileset-aware water checks.
-- CUT grass/tree messages now use Vanilla+'s shared dialogue formatter for cleaner wrapping and pagination.
+- CUT grass/tree messages use Vanilla+'s shared dialogue formatter for cleaner wrapping and pagination.
 
-# Changelog
-
-## Beta v1.0
+## Beta v1.0.0
 
 First public beta.
 
@@ -22,6 +36,5 @@ Highlights:
 - Fighting Dojo trade addition
 - Expanded Professor Oak interactions
 - Optional postgame exploration conveniences
-- Compatibility testing against Gen1Recomp++ 0.2.10, Wilds of Kanto 2.1.8 and Potato Voxel 1.8.2
 
-This public changelog intentionally avoids documenting hidden or unfinished content.
+This public changelog intentionally avoids documenting hidden content.

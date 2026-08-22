@@ -6,6 +6,7 @@ return {
     "Adds quality-of-life features while preserving the feel of Red, Blue and Yellow.",
     "Adds optional encounter, travel, field-action and world-interaction improvements.",
     "Adds Hidden Stats information, Running Shoes, persistent Cut trees and a Tradeback Evo NPC.",
+    "Expands the Adventurer's Toolkit with Fishing, TM/HM Bag, Equipment, Keys & Tickets, registration shortcuts and optional Reusable TMs.",
     "Includes additional optional content and discoveries not fully spoiled in the feature list."
   },
   credits = {
