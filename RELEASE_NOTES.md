@@ -1,33 +1,30 @@
-# Vanilla+ Beta v1.2.0
+# Vanilla+ Beta v1.2.1 Hotfix
 
-Beta v1.2.0 expands the Adventurer's Toolkit into a broader inventory/utility system while preserving the existing public Beta feature set.
+Beta v1.2.1 is a compatibility and UI hotfix for Beta v1.2.0.
 
-## New / Expanded
+## Fixed
 
-- Expanded Toolkit main menu with **Field Tools, Laptop, Fishing, TM/HM Bag, Equipment, Keys & Tickets, Register, and Cancel**.
-- Added a dedicated **TM/HM Bag** that contains only machines the player actually owns.
-- Press **SELECT** inside the TM/HM Bag to cycle sorting by **number, move name, or attack type**.
-- Added **Reusable TMs** as a separate toggle, default OFF. HMs remain reusable normally.
-- Added dedicated **Fishing** storage for Old Rod, Good Rod, and Super Rod.
-- Expanded **Equipment** storage to include supported utility items such as Coin Case and Silph Scope.
-- Added **Keys & Tickets** storage for supported access/progression items including S.S. Ticket, Secret Key, Card Key, and Lift Key.
-- Added **TM/HM Bag** to the Toolkit Register pool for direct SELECT access when registered.
-- Existing Toolkit owners are automatically migrated to the expanded Toolkit system without needing to reacquire it.
+- Reworked Vanilla+'s **SELECT/Register input handling** to use Gen1Recomp++'s fixed-step input pathway.
+- **Wilds of Kanto 2.1.9:** Vanilla+'s SELECT-based Toolkit and registered shortcuts are now confirmed working alongside Wilds in current testing.
+- Restored the intended **full-height Bag and TM/HM Bag list boxes** after the v1.2.0 UI regression compressed them to a short list.
+- Added **Toolkit ownership self-healing**. Players who already possess the Toolkit through a nonstandard acquisition path can have the required Vanilla+ Toolkit state initialized automatically instead of depending solely on the original Mom handoff event.
 
-## Compatibility note
+## Retained from v1.2.0
 
-Wilds of Kanto 2.1.8 works well with Vanilla+ in current gameplay testing, but Wilds currently captures **SELECT**, which conflicts with Vanilla+'s SELECT-based Toolkit and registered shortcuts. See `docs/COMPATIBILITY.md`.
+- Expanded Adventurer's Toolkit
+- Field Tools, Laptop, Fishing, TM/HM Bag, Equipment, Keys & Tickets, and Register
+- TM/HM Bag sorting by number, move name, or attack type
+- TM/HM Bag registration for direct SELECT access
+- Toggleable Reusable TMs
+- Existing-save Toolkit migration
 
-## Previous v1.1.0 fixes retained
+## Testing note
 
-- CUT interactions distinguish grass from trees with the correct dialogue.
-- Indoor furniture and other reused tile IDs no longer incorrectly trigger Surf/Fishing-style field interactions.
-- CUT interaction dialogue uses Vanilla+'s shared dialogue formatter for cleaner textbox wrapping/pagination.
+The new SELECT architecture is confirmed working on the primary iOS test setup alongside Wilds of Kanto 2.1.9. Additional Windows, Android, Linux, macOS, and controller testing remains valuable.
 
 ## Notes
 
 - No ROM is included.
 - Back up your save before updating.
 - Existing saves are supported where practical.
-- Some settings may require a full app restart before behavior changes safely.
-- Vanilla+ remains a beta. Compatibility is tested, not guaranteed with every mod combination.
+- Vanilla+ remains a beta.

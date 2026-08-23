@@ -1,6 +1,6 @@
 # Vanilla+
 
-**Version:** Beta v1.2.0  
+**Version:** Beta v1.2.1  
 **Developer:** GiveScottPot  
 **For:** Pokémon Red, Blue and Yellow on Gen1Recomp++  
 **Tested baseline:** Gen1Recomp++ 0.2.10
@@ -9,7 +9,7 @@ Vanilla+ expands Gen I without trying to replace what makes Red, Blue, and Yello
 
 Some discoveries are intentionally left out of the documentation. Kanto is more fun when every surprise is not itemized in a README like tax deductions.
 
-## Beta v1.2.0 features
+## Beta v1.2.1
 
 - Running Shoes integrated into normal early-game progression
 - Hidden Stats / DV and Stat Experience information
@@ -59,11 +59,11 @@ Back up important saves before updating or significantly changing your mod stack
 
 Known tested/working combinations include:
 
-- **Wilds of Kanto 2.1.8:** gameplay compatibility is good in current testing, but Wilds currently captures/uses **SELECT**. This conflicts with Vanilla+'s SELECT shortcuts, including Toolkit quick access and registered shortcuts. Until that input conflict is resolved, expect SELECT-based Vanilla+ shortcuts to be unavailable or unreliable while Wilds is enabled.
-- **Potato Voxel 1.8.2:** tested compatible in prior/current known-good stacks; did not hold SELECT hostage in earlier testing.
-- **Dramaless Shape Voxel 2.0.2:** tested working alongside Vanilla+ and does not currently interfere with SELECT functionality.
-- **Dramatic Shape Voxel:** previously tested compatible in known-good stacks.
-- **Anime Realism 3.2.0:** tested working alongside Vanilla+ on the current development stack.
+- **Wilds of Kanto 2.1.9:** confirmed working with Vanilla+ Beta v1.2.1, including Vanilla+'s SELECT-based Toolkit/Register shortcuts. v1.2.1 replaces the older SELECT handling with a fixed-step input architecture to resolve the previous conflict.
+- **Dramaless Shape Voxel 2.0.2:** tested working alongside Vanilla+.
+- **Dramatic Shape Voxel 1.9.0:** previously tested compatible in known-good stacks.
+- **Potato Voxel:** tested compatible in prior known-good stacks. Current 1.8.3 compatibility should still be reported if anything behaves differently.
+- **Anime Realism:** tested compatible in prior known-good stacks. Current 4.0.2 compatibility testing is welcome.
 
 Do not stack multiple voxel renderers unless their authors explicitly support doing so. Compatibility is tested, not guaranteed across every platform, version, save, or mod combination. See `docs/COMPATIBILITY.md` for details.
 
@@ -79,7 +79,7 @@ Reports are most useful when they include:
 - Whether the issue survives a full app restart
 - Screenshot or recording when possible
 
-Existing saves are supported where practical. The v1.2.0 Toolkit update includes automatic migration for supported Toolkit-owned items so players who already received the Toolkit do not have to reacquire it.
+Existing saves are supported where practical. The Toolkit system includes automatic migration for supported Toolkit-owned items so players who already received the Toolkit do not have to reacquire it.
 
 ## Contributing
 

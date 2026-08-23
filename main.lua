@@ -1,4 +1,4 @@
--- Vanilla+ 1.2.0
+-- Vanilla+ Beta v1.2.1 - SELECT compatibility hotfix
 -- Native-style hidden-stat page for Pokémon summaries.
 -- A/B: Stats -> Hidden Stats -> Moves -> close
 -- SELECT on Hidden Stats: DVs <-> Stat Exp
@@ -1409,7 +1409,7 @@ return function(mod)
   end
 
   mod.events:on("world.interacted", function(ev)
-    if mod.options:get("adventurers_toolkit") and mod.save:get("toolkit_received_v1") then return end
+    if mod.options:get("adventurers_toolkit") and toolkitUnlocked(g) then return end
     if not mod.options:get("field_shortcuts") or not ev or ev.kind ~= "none" then return end
     local game = gameRef
     local ow = game and game.stack and game.stack:top()
@@ -1481,6 +1481,16 @@ return function(mod)
     local TOOLKIT_ID = "VP_ADVENTURERS_TOOLKIT"
     local TOOLKIT_NAME = "TOOLKIT"
     local LAPTOP_ID = "VP_TOOLKIT_LAPTOP"
+
+    local function toolkitItemOwned(g)
+      local inv = g and g.save and g.save.inventory
+      return inv and (inv[TOOLKIT_ID] or 0) > 0 or false
+    end
+
+    local function toolkitUnlocked(g)
+      return mod.options:get("adventurers_toolkit")
+        and (mod.save:get("toolkit_received_v1") == true or toolkitItemOwned(g))
+    end
 
     local function playerName()
       return gameRef and gameRef.save and gameRef.save.player
@@ -2165,7 +2175,7 @@ return function(mod)
 
 
     local function consolidateOwnedKeyItems(g)
-      if not (g and g.save and mod.save:get("toolkit_received_v1")) then return 0 end
+      if not (g and g.save and toolkitUnlocked(g)) then return 0 end
       g.save.inventory = g.save.inventory or {}
       g.save.pcItems = g.save.pcItems or {}
       local moved = 0
@@ -2210,7 +2220,7 @@ return function(mod)
 
 
     local function withConsolidatedInventoryHidden(g, fn)
-      if not (g and g.save and mod.save:get("toolkit_received_v1")) then
+      if not (g and g.save and toolkitUnlocked(g)) then
         return fn()
       end
       local inv, held = g.save.inventory or {}, {}
@@ -2532,6 +2542,12 @@ return function(mod)
     local TOOLKIT_HM_NUMBER = { CUT = 1, FLY = 2, SURF = 3, STRENGTH = 4, FLASH = 5 }
 
     local openingToolkitMachineBag = false
+
+    -- Vanilla+ SELECT bridge (test16).
+    -- Uses the same fixed-step queue pattern as the current Quick Select mod.
+    local vpTMHMBagActive = false
+    local vpTMHMSortNow = nil
+
     local function machineMeta(id)
       local def = gameRef and gameRef.data and gameRef.data.items and gameRef.data.items[id]
       local moveId = def and def.machine and def.machine.move
@@ -2594,13 +2610,18 @@ return function(mod)
         g.save.bagOrder = oldOrder
         Bag.order(g.save, g.data) -- prune consumed machines / append anything new
       end
+      vpTMHMBagActive = true
       local previousClose = list.close
       function list:close(...)
+        vpTMHMBagActive = false
+        vpTMHMSortNow = nil
         restoreInventory()
         return previousClose(self, ...)
       end
       local previousCancel = list.onCancel
       list.onCancel = function(...)
+        vpTMHMBagActive = false
+        vpTMHMSortNow = nil
         restoreInventory()
         if previousCancel then return previousCancel(...) end
       end
@@ -2624,13 +2645,15 @@ return function(mod)
         list.title = "TM/HM BAG " .. mode
         list.footer = "SELECT: SORT"
       end
-      list.onSelectKey = function(_, l)
+      local function cycleSortMode()
         local idx = 1
         for i, m in ipairs(modes) do if m == mode then idx = i break end end
         mode = modes[(idx % #modes) + 1]
         mod.save:set("toolkit_tm_sort_v1", mode)
         applySort()
       end
+      list.onSelectKey = function(_, l) cycleSortMode() end
+      vpTMHMSortNow = cycleSortMode
       local previousUpdate = list.update
       function list:update(dt)
         applySort()
@@ -2775,13 +2798,41 @@ return function(mod)
         id = TOOLKIT_ID, name = TOOLKIT_NAME, price = 0,
         keyItem = true, pocket = "KEY_ITEM",
       }
-      if mod.save:get("toolkit_received_v1") then
+      -- Self-heal nonstandard acquisition (cheats, save editors, another mod,
+      -- or an older migration): actual Toolkit ownership is enough.
+      if toolkitItemOwned(g) and not mod.save:get("toolkit_received_v1") then
+        mod.save:set("toolkit_received_v1", true)
+      end
+      if toolkitUnlocked(g) then
         consolidateOwnedKeyItems(g)
         if not mod.save:get("registered_key_item_v1") then
           mod.save:set("registered_key_item_v1", TOOLKIT_ID)
         end
       end
     end)
+
+    -- Restore the full-height Bag presentation used by Vanilla+.
+    -- Newer Gen1Recomp BagMenu constructs kind="bag" with itemBox=true, whose
+    -- renderer is hard-coded to a four-row partial box. Intercept construction
+    -- and request the normal seven-row ListMenu instead. This applies to both
+    -- the ordinary Bag and Vanilla+'s TM/HM Bag.
+    do
+      local okListMenu, ListMenu = pcall(require, "src.ui.ListMenu")
+      if okListMenu and ListMenu and not ListMenu._vanillaPlusFullBagWrapped then
+        ListMenu._vanillaPlusFullBagWrapped = true
+        local previousListNew = ListMenu.new
+        function ListMenu.new(g, title, items, opts)
+          if opts and opts.kind == "bag" then
+            local copy = {}
+            for k, v in pairs(opts) do copy[k] = v end
+            copy.itemBox = false
+            copy.rows = 7
+            opts = copy
+          end
+          return previousListNew(g, title, items, opts)
+        end
+      end
+    end
 
     -- Hide consolidated equipment from the normal Bag and Player PC while
     -- leaving its ownership mirrored in save.inventory for vanilla scripts.
@@ -2802,7 +2853,7 @@ return function(mod)
         PlayerPC._vanillaPlusToolkitConsolidationWrapped = true
         local previousPCNew = PlayerPC.new
         function PlayerPC.new(g, opts)
-          if not mod.save:get("toolkit_received_v1") then return previousPCNew(g, opts) end
+          if not toolkitUnlocked(g) then return previousPCNew(g, opts) end
           -- Keep the real vanilla items mirrored for scripts, but make them
           -- non-depositable by temporarily hiding them for the lifetime of
           -- each DEPOSIT list construction. PlayerPC's submenu is created
@@ -2897,54 +2948,95 @@ return function(mod)
       if mod.save:get("toolkit_received_v1") then consolidateOwnedKeyItems(gameRef) end
     end)
 
-    -- Registered key item: SELECT in the idle overworld invokes one stored
-    -- key item directly. The Toolkit is registered automatically at Mom's
-    -- handoff; REGISTER inside the Toolkit can switch it to another owned item.
-    if not OverworldState._vanillaPlusRegisteredItemWrapped then
-      OverworldState._vanillaPlusRegisteredItemWrapped = true
-      local previousRegisteredUpdate = OverworldState.update
-      local selectFrames, selectArmed, selectLongUsed = 0, false, false
-      function OverworldState:update(...)
-        local input = gameRef and gameRef.input
-        local canUse = input and gameRef.stack and gameRef.stack:top() == self
-          and self.player and not self.player.moving
-          and not self.transitioning
-          and (not self.runner or not self.runner:isRunning())
-          and #((self.scriptMoves) or {}) == 0
-        if not canUse then
-          selectFrames, selectArmed, selectLongUsed = 0, false, false
-          return previousRegisteredUpdate(self, ...)
+    -- Registered Toolkit shortcuts: test16 uses the proven Quick Select
+    -- fixed-step input pattern and invokes actions directly from input.step.
+    do
+      local armed, holdFrames, holdUsed = false, 0, false
+
+      local function queued(input, button)
+        for _, value in ipairs((input and input.pressQueue) or {}) do
+          if value == button then return true end
         end
-        if input:wasPressed("select") then
-          selectArmed, selectLongUsed = true, false
-          selectFrames = input:isDown("select") and 1 or 0
-          -- Touch taps can press+release between fixed steps. Treat those as
-          -- an immediate normal registered-item tap.
-          if not input:isDown("select") then
-            local id = mod.save:get("registered_key_item_v1")
-            if id and mod.save:get("toolkit_received_v1") then useStoredKeyItem(id); return end
+        return false
+      end
+
+      local function consumeQueued(input, button)
+        if not input or type(input.pressQueue) ~= "table" then return end
+        local kept = {}
+        for _, value in ipairs(input.pressQueue) do
+          if value ~= button then kept[#kept + 1] = value end
+        end
+        input.pressQueue = kept
+      end
+
+      local function freeRoam(g)
+        local ow = g and g.overworld
+        local p = ow and ow.player
+        if not ow or not p or not g.stack or g.stack:top() ~= ow
+          or g.linkSession or (g.linkNet and not g.linkNet.closed)
+          or p.moving or p.inputLocked or ow.transitioning or ow.engaging
+          or ow.emote or ow.teleportOut or ow.flyAnim or ow.healAnim
+          or ow.pikaHop or ow.cutAnim or ow.dustAnim or ow.fishPose
+          or p.spinning or p.fishing or #((ow.scriptMoves) or {}) > 0 then
+          return false
+        end
+        if ow.runner and ow.runner.isRunning and ow.runner:isRunning() then return false end
+        return true
+      end
+
+      mod.hooks:wrap("input.step", function(nextFn, g, dt)
+        -- Exact important ordering used by Quick Select: sibling hooks first.
+        if nextFn then nextFn(g, dt) end
+        local input = g and g.input
+        if not input or not toolkitUnlocked(g) then
+          armed, holdFrames, holdUsed = false, 0, false
+          return
+        end
+
+        local selectPressed = queued(input, "select")
+        local selectDown = input.state and input.state.select == true
+
+        if vpTMHMBagActive then
+          if selectPressed and vpTMHMSortNow then
+            consumeQueued(input, "select")
+            vpTMHMSortNow()
           end
-        elseif selectArmed and input:isDown("select") then
-          selectFrames = selectFrames + 1
-          if selectFrames >= 24 and not selectLongUsed
-            and mod.save:get("toolkit_received_v1") then
-            selectLongUsed = true
+          return
+        end
+
+        if not freeRoam(g) then
+          if not selectDown then armed, holdFrames, holdUsed = false, 0, false end
+          return
+        end
+
+        if selectPressed then
+          armed, holdFrames, holdUsed = true, 0, false
+          consumeQueued(input, "select")
+          if not selectDown then
+            armed = false
+            local id = mod.save:get("registered_key_item_v1")
+            if id then useStoredKeyItem(id) end
+            return
+          end
+        end
+
+        if not armed then return end
+        if selectDown then
+          holdFrames = holdFrames + 1
+          if holdFrames >= 24 and not holdUsed then
+            holdUsed, armed = true, false
             openRegisterMenu()
             return
           end
-        elseif selectArmed and not input:isDown("select") then
-          if not selectLongUsed then
+        else
+          armed = false
+          if not holdUsed then
             local id = mod.save:get("registered_key_item_v1")
-            if id and mod.save:get("toolkit_received_v1") then
-              selectArmed = false
-              useStoredKeyItem(id)
-              return
-            end
+            if id then useStoredKeyItem(id) end
           end
-          selectFrames, selectArmed, selectLongUsed = 0, false, false
+          holdFrames, holdUsed = 0, false
         end
-        return previousRegisteredUpdate(self, ...)
-      end
+      end, 500)
     end
 
     -- Post-Champion Toolkit handoff.  Nothing fires automatically anymore.

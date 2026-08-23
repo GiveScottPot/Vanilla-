@@ -1,5 +1,13 @@
 # Vanilla+ Changelog
 
+## Beta v1.2.1 Hotfix
+
+- Reworked Vanilla+'s SELECT/Register input handling around Gen1Recomp++'s fixed-step input queue.
+- Confirmed Toolkit/Register SELECT shortcuts working alongside **Wilds of Kanto 2.1.9**.
+- Fixed the normal Bag and TM/HM Bag list boxes being compressed to a short four-row presentation; both now use the intended full-height list.
+- Added Toolkit ownership self-healing: if the Toolkit is obtained through a nonstandard path such as a cheat, save editor, migration, or another mod, Vanilla+ initializes the required Toolkit state automatically.
+- Preserved the expanded Toolkit, TM/HM Bag sorting, Register pool, and Reusable TMs behavior from v1.2.0.
+
 ## Beta v1.2.0
 
 - Expanded the Adventurer's Toolkit into Field Tools, Laptop, Fishing, TM/HM Bag, Equipment, Keys & Tickets, and Register sections.
