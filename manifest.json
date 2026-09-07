@@ -1,12 +1,12 @@
 {
   "id": "vanillaplus",
-  "name": "Vanilla+ Beta v1.2.1",
-  "version": "1.2.1",
+  "name": "Vanilla+ v1.2.2",
+  "version": "1.2.2",
   "api": 2,
   "entry": "main.lua",
   "profile": "content",
   "category": "TOOL",
-  "game_version": ">=0.2.10 <2.0.0",
+  "game_version": ">=0.2.56 <2.0.0",
   "games": [
     "gen1"
   ],

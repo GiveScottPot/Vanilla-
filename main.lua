@@ -1,4 +1,4 @@
--- Vanilla+ Beta v1.2.1 - SELECT compatibility hotfix
+-- Vanilla+ v1.2.2 compatibility hotfix for Gen1Recomp++ 0.2.56+
 -- Native-style hidden-stat page for Pokémon summaries.
 -- A/B: Stats -> Hidden Stats -> Moves -> close
 -- SELECT on Hidden Stats: DVs <-> Stat Exp
@@ -15,11 +15,11 @@ return function(mod)
     },
     {
       key = "version_exclusives",
-      label = "R/B/Y EXCLUSIVES",
+      label = "R/B EXCLUSIVES",
       type = "toggle",
       default = false,
-      description = "Makes version-exclusive Pokemon available in additional fitting habitats. Restart required.",
-      help = "Makes version-exclusive Pokemon available in additional fitting habitats. Restart required.",
+      description = "Adds the other Red/Blue version-exclusive Pokemon to fitting habitats. Does not add Yellow-only placements. Restart required.",
+      help = "Adds the other Red/Blue version-exclusive Pokemon to fitting habitats. Does not add Yellow-only placements. Restart required.",
     },
     {
       key = "wild_fossils",
@@ -63,11 +63,11 @@ return function(mod)
     },
     {
       key = "yellow_route_encounters",
-      label = "YELLOW ROUTE ENCOUNTERS",
+      label = "ALL-CART ENCOUNTERS",
       type = "toggle",
       default = false,
-      description = "Adds selected Pokemon Yellow-style encounter placements to the world. Restart required.",
-      help = "Adds selected Pokemon Yellow-style encounter placements to the world. Restart required.",
+      description = "Combines Red, Blue, and Yellow encounter availability while keeping the current cart as the base. Restart required.",
+      help = "Combines Red, Blue, and Yellow encounter availability while keeping the current cart as the base. Restart required.",
     },
     {
       key = "repel_reuse_prompt",
@@ -118,6 +118,14 @@ return function(mod)
       help = "Shows the taught move in every TM name, such as TM24 THUNDERBOLT, in the Bag and PC.",
     },
     {
+      key = "tm_marts",
+      label = "TM MARTS",
+      type = "toggle",
+      default = true,
+      description = "Adds themed post-Champion TM stock to Kanto marts and gives mart BUY/SELL lists tighter spacing for long item names.",
+      help = "Adds themed post-Champion TM stock to Kanto marts and gives mart BUY/SELL lists tighter spacing for long item names.",
+    },
+    {
       key = "reusable_tms",
       label = "REUSABLE TMS",
       type = "toggle",
@@ -151,11 +159,11 @@ return function(mod)
     },
     {
       key = "oak_postdex_life",
-      label = "OAK POST-DEX LIFE",
+      label = "NPC ADDITIONAL DIALOGUE",
       type = "toggle",
       default = true,
-      description = "Gives PROF.OAK additional dialogue after major Pokedex progress.",
-      help = "Gives PROF.OAK additional dialogue after major Pokedex progress.",
+      description = "Adds optional extra dialogue to select NPCs after relevant story milestones.",
+      help = "Adds optional extra dialogue to select NPCs after relevant story milestones.",
     },
   })
 
@@ -218,7 +226,7 @@ return function(mod)
   -- This intentionally excludes Scyther/Pinsir and Electabuzz/Magmar until their
   -- habitat placement receives separate design approval.
   local function applyVersionExclusivePreview()
-    if not mod.options:get("version_exclusives") then
+    if not (mod.options:get("version_exclusives") or mod.options:get("yellow_route_encounters")) then
       return
     end
 
@@ -601,11 +609,11 @@ return function(mod)
     text = tostring(text or "")
     local pages = {}
     for page in (text .. "\f"):gmatch("(.-)\f") do
-      -- Keep only explicit authored form-feed beats. Inside each beat, hand
-      -- line breaks are treated as ordinary spaces and the native TextBox
-      -- paginator owns glyph-width wrapping, scrolling, and the two-line
-      -- viewport. This mirrors base-game flow much more closely than
-      -- pre-packing custom text into 18-character Lua lines.
+      -- Recomp 0.2.56 already performs width-aware soft wrapping. Vanilla+
+      -- should only remove legacy hand-authored line/scroll breaks and preserve
+      -- deliberate form-feed page beats. Injecting \v here forces an A press
+      -- between otherwise natural wrapped lines, which caused the recent
+      -- Bill/Mom/Mr. Mime/Axe choppy-pagination regression.
       page = page:gsub("[\r\n\v]+", " ")
                  :gsub("%s+", " ")
                  :gsub("^%s+", "")
@@ -618,6 +626,1380 @@ return function(mod)
 
 
 
+
+  -- Trainer Dialogue Framework — Route 8 Lass Champion test20 --------------------------------------
+  -- Route 8 Lass three-state Champion dialogue test.
+  --
+  -- Stop guessing her object index/party. The only identity signal already
+  -- proven by QA is her unique challenge text. We therefore chain the actual
+  -- trainer lifecycle:
+  --
+  -- world.trainer_engaged -> remember the real NPC
+  -- proven pre-battle TextBox -> identify that remembered NPC as our target
+  -- trainer.before_battle -> arm the exact encounter
+  -- battle.started -> replace that battle's endBattleText directly
+  -- defeated talkTo -> replace re-talk by the remembered NPC id
+  do
+    local TextBox = require("src.render.TextBox")
+    local okOW, OverworldState = pcall(require, "src.world.OverworldController")
+
+    local function lassPlayerName()
+      local save = gameRef and gameRef.save
+      local player = save and save.player
+      return (player and player.name) or "RED"
+    end
+
+    local function lassPreText()
+      return "Oh my gosh, it's CHAMPION " .. lassPlayerName()
+        .. "! My WIGGLYTUFFS have been itching for payback!"
+    end
+
+    local lassDefeatText = "This is just\nlike last time?!"
+
+    local function lassAfterText()
+      return "You truly are one of the best to ever do it, "
+        .. lassPlayerName() .. "."
+    end
+
+    local function championReady()
+      local flags = gameRef and gameRef.save and gameRef.save.flags or {}
+      return flags.EVENT_BEAT_CHAMPION_RIVAL and true or false
+    end
+
+    local lastEngaged = nil
+    local armedBattle = nil
+
+    local function cleanForMatch(text)
+      if type(text) ~= "string" then return "" end
+      local t = text:gsub("[%z\1-\31]", " ")
+      t = t:gsub("%s+", " ")
+      return t:lower()
+    end
+
+    local function rememberTarget(info)
+      if not info then return end
+      gameRef.save.vpRoute8LassNpcId = info.npcId
+      gameRef.save.vpRoute8LassMapId = info.mapId
+      gameRef.save.vpRoute8LassClass = info.trainerClass
+      gameRef.save.vpRoute8LassParty = info.partyIndex
+      mod.log:info("v1.2.1-test31 Lass IDENTIFIED npc="
+        .. tostring(info.npcId) .. " map=" .. tostring(info.mapId)
+        .. " class=" .. tostring(info.trainerClass)
+        .. " party=" .. tostring(info.partyIndex))
+    end
+
+    local function isRememberedTarget(ow, npc)
+      if not ow or not npc then return false end
+      return gameRef.save.vpRoute8LassNpcId ~= nil
+         and npc.id == gameRef.save.vpRoute8LassNpcId
+         and tostring(ow.map.id) == tostring(gameRef.save.vpRoute8LassMapId)
+    end
+
+    -- First capture whichever real trainer NPC the engine is engaging.
+    mod.events:on("world.trainer_engaged", function(ev)
+      local ow = gameRef and gameRef.overworld
+      local npc = ev and ev.npc
+      if not ow or not npc then return end
+      lastEngaged = {
+        npcId = npc.id,
+        mapId = ow.map and ow.map.id,
+        trainerClass = ev.trainerClass or (npc.def and npc.def.trainerClass),
+        partyIndex = ev.partyIndex or (npc.def and npc.def.trainerParty) or 1,
+      }
+      mod.log:info("v1.2.1-test20 trainer engaged candidate npc="
+        .. tostring(lastEngaged.npcId))
+    end)
+
+    -- State 1: proven hook. Matching this unique challenge text is what
+    -- officially identifies the previously remembered real NPC as our Lass.
+    if TextBox and type(TextBox.new) == "function"
+       and not TextBox._vanillaPlusRoute8LassPreTest20 then
+      local nativeTextBoxNew = TextBox.new
+      TextBox.new = function(game, text, onDone, opts)
+        if type(text) == "string" then
+          local t = cleanForMatch(text)
+          if championReady() and t:find("cute, round and fluffy", 1, true) then
+            rememberTarget(lastEngaged)
+            text = vpFormatDialogue(lassPreText())
+            mod.log:info("v1.2.1-test31 Lass PRE hook hit")
+          end
+        end
+        return nativeTextBoxNew(game, text, onDone, opts)
+      end
+      TextBox._vanillaPlusRoute8LassPreTest20 = true
+    end
+
+    -- Progressive Leveling prototype (test31) -------------------------------
+    -- The exact Route 8 Lass is our guinea pig for the global post-Champion
+    -- trainer architecture:
+    --   highest player level 55-60 -> 3 mons
+    --                        61-69 -> 4 mons
+    --                        70-79 -> 5 mons
+    --                        80+   -> 6 mons
+    -- Postgame trainer levels have a hard floor of 55 and are distributed
+    -- around the player's highest party level instead of being identical.
+    --
+    -- Each ordinary trainer will ultimately own one curated permanent
+    -- six-Pokemon pool. Runtime code only chooses how much of that pool is
+    -- active and applies the level spread. For this Lass, Clefable is the
+    -- signature ace because her vanilla identity is built around Clefairy.
+    local lassProgressivePool = {
+      { species = "WIGGLYTUFF",
+        moves = { "BODY_SLAM", "SING", "REST", "DOUBLE_EDGE" } },
+      { species = "CHANSEY",
+        moves = { "SEISMIC_TOSS", "THUNDER_WAVE", "SOFTBOILED", "REFLECT" } },
+      { species = "NIDOQUEEN",
+        moves = { "EARTHQUAKE", "BODY_SLAM", "TOXIC", "FISSURE" } },
+      { species = "NIDOKING",
+        moves = { "EARTHQUAKE", "ROCK_SLIDE", "BODY_SLAM", "FISSURE" } },
+      { species = "SNORLAX",
+        moves = { "BODY_SLAM", "REST", "AMNESIA", "FISSURE" } },
+      { species = "CLEFABLE",
+        moves = { "PSYCHIC", "THUNDER_WAVE", "BODY_SLAM", "SOFTBOILED" },
+        ace = true },
+    }
+
+    local function highestPlayerPartyLevel()
+      local highest = 0
+      local party = gameRef and gameRef.save and gameRef.save.party or {}
+      for _, mon in ipairs(party) do
+        local lv = tonumber(mon and mon.level) or 0
+        if lv > highest then highest = lv end
+      end
+      return highest
+    end
+
+    local function progressivePartySize(highest)
+      if highest >= 80 then return 6 end
+      if highest >= 70 then return 5 end
+      if highest >= 61 then return 4 end
+      return 3 -- post-Champion floor covers 55-60 and any lower test save
+    end
+
+    local progressiveOffsets = {
+      [3] = { -2,  0,  2 },
+      [4] = { -3, -1,  0,  2 }, -- Lv61 -> 58/60/61/63
+      [5] = { -3, -2,  0,  1,  2 },
+      [6] = { -3, -2, -1,  0,  1,  2 },
+    }
+
+    local function scaledLevel(highest, offset)
+      local lv = highest + offset
+      if lv < 55 then lv = 55 end
+      if lv > 100 then lv = 100 end
+      return lv
+    end
+
+    local function buildLassProgressiveParty()
+      local highest = highestPlayerPartyLevel()
+      -- Champion-side scaling never treats the reference as below 55.
+      if highest < 55 then highest = 55 end
+
+      local count = progressivePartySize(highest)
+      local offsets = progressiveOffsets[count]
+      local selected = {}
+
+      -- Select from the permanent six in a stable progression order while
+      -- always preserving the ace. This makes the first test deterministic.
+      -- Later the same engine can use curated per-trainer slot priorities or
+      -- controlled variety without changing the scaler itself.
+      local nonAceCount = count - 1
+      for i = 1, nonAceCount do
+        selected[#selected + 1] = lassProgressivePool[i]
+      end
+      selected[#selected + 1] = lassProgressivePool[6] -- Clefable ace
+
+      local out = {}
+      for i, row in ipairs(selected) do
+        out[#out + 1] = {
+          species = row.species,
+          level = scaledLevel(highest, offsets[i]),
+          moves = row.moves,
+        }
+      end
+
+      mod.log:info("v1.2.1-test31 Progressive Lass highest="
+        .. tostring(highest) .. " count=" .. tostring(count))
+      for i, row in ipairs(out) do
+        mod.log:info("v1.2.1-test31 slot" .. tostring(i) .. "="
+          .. tostring(row.species) .. " Lv" .. tostring(row.level))
+      end
+      return out
+    end
+
+    if mod.hooks then
+      mod.hooks:wrap("trainer.party", function(next, trainerClass, partyIndex, party)
+        local out = next(trainerClass, partyIndex, party)
+        if championReady()
+           and gameRef.save.vpRoute8LassClass ~= nil
+           and trainerClass == gameRef.save.vpRoute8LassClass
+           and (partyIndex or 1) == (gameRef.save.vpRoute8LassParty or 1) then
+          return buildLassProgressiveParty()
+        end
+        return out
+      end)
+    end
+
+    -- Arm only the encounter whose real npcId/mapId were learned above.
+    if mod.hooks then
+      mod.hooks:wrap("trainer.before_battle",
+        function(next, game, context, continue)
+          if championReady()
+             and context
+             and gameRef.save.vpRoute8LassNpcId ~= nil
+             and context.npcId == gameRef.save.vpRoute8LassNpcId
+             and tostring(context.mapId) == tostring(gameRef.save.vpRoute8LassMapId) then
+            armedBattle = {
+              trainerClass = context.trainerClass,
+              partyIndex = context.partyIndex,
+              npcId = context.npcId,
+              mapId = context.mapId,
+            }
+            mod.log:info("v1.2.1-test31 Lass BEFORE_BATTLE armed")
+          end
+          return next(game, context, continue)
+        end)
+    end
+
+    -- State 2: battle.started gives us the live BattleState. Set the final
+    -- trainer-loss line directly on that live battle, after construction but
+    -- long before victory consumes it.
+    mod.events:on("battle.started", function(ev)
+      local battle = ev and ev.battle
+      if not championReady() or not battle or not armedBattle then return end
+      if battle.kind ~= "trainer" then return end
+      if battle.oppClass ~= armedBattle.trainerClass
+         or (battle.partyIndex or 1) ~= (armedBattle.partyIndex or 1) then
+        return
+      end
+
+      battle.endBattleText = lassDefeatText
+      battle._vpRoute8LassNpcId = armedBattle.npcId
+      battle._vpRoute8LassMapId = armedBattle.mapId
+      -- Real finite diagnostic bag. These counts live only for this battle.
+      battle._vpLassInventory = {
+        MAX_REVIVE = 1,
+        REVIVE = 2,
+        FULL_RESTORE = 2,
+        X_ACCURACY = 3,
+        X_ATTACK = 1,
+        FULL_HEAL = 1,
+      }
+      mod.log:info("v1.2.1-test31 Lass DEFEAT + finite item bag armed")
+      armedBattle = nil
+    end)
+
+    -- State 3: use the exact NPC id learned from the working challenge hook.
+    -- No trainer index, class, party or dialogue substring guessing here.
+    if okOW and OverworldState and type(OverworldState.talkTo) == "function"
+       and not OverworldState._vanillaPlusRoute8LassTalkTest20 then
+      local nativeTalkTo = OverworldState.talkTo
+      function OverworldState:talkTo(npc)
+        if championReady()
+           and npc and npc.def and npc.def.trainerClass
+           and isRememberedTarget(self, npc)
+           and type(self.trainerDefeated) == "function"
+           and self:trainerDefeated(npc) then
+          npc.frozen = true
+          if npc.facePlayer and self.player then npc:facePlayer(self.player) end
+          mod.log:info("v1.2.1-test31 Lass AFTER direct npc hook hit")
+          gameRef.stack:push(TextBox.new(gameRef, vpFormatDialogue(lassAfterText()),
+            function() npc.frozen = false end))
+          return
+        end
+        return nativeTalkTo(self, npc)
+      end
+      OverworldState._vanillaPlusRoute8LassTalkTest20 = true
+    end
+  end
+
+
+  -- Lt. Surge post-defeat trash-can Easter egg (test47) -------------------
+  -- The lone empty can in Surge's upper room becomes a one-roll reward after
+  -- every eligible Surge defeat. The 15-can switch puzzle downstairs remains
+  -- completely vanilla.
+  do
+    local TextBox = require("src.render.TextBox")
+    local VERMILION_GYM_TRASH = "VERMILION_GYM"
+    local SURGE_TRASH_CLASS = "OPP_LT_SURGE"
+
+    local function surgeTrashSave()
+      return gameRef and gameRef.save
+    end
+
+    local function surgeStoryDefeated()
+      local save=surgeTrashSave()
+      local flags=save and save.flags or {}
+      return flags.EVENT_BEAT_LT_SURGE and true or false
+    end
+
+    local function ensureSurgeTrashState()
+      local save=surgeTrashSave()
+      if not save then return end
+      -- Existing saves that already beat story Surge receive exactly one
+      -- initial claim. Fresh saves are armed by the actual battle win below.
+      if save.vpSurgeTrashDefeatCount == nil then
+        save.vpSurgeTrashDefeatCount = surgeStoryDefeated() and 1 or 0
+      end
+      if save.vpSurgeTrashClaimCount == nil then save.vpSurgeTrashClaimCount=0 end
+    end
+
+    local function armSurgeTrashReward()
+      local save=surgeTrashSave()
+      if not save then return end
+      ensureSurgeTrashState()
+      save.vpSurgeTrashDefeatCount=(tonumber(save.vpSurgeTrashDefeatCount) or 0)+1
+      mod.log:info("v1.2.1-test47 Surge trash armed defeatCount="..tostring(save.vpSurgeTrashDefeatCount))
+    end
+
+    local function surgeTrashReady()
+      local save=surgeTrashSave()
+      if not save then return false end
+      ensureSurgeTrashState()
+      return (tonumber(save.vpSurgeTrashClaimCount) or 0) < (tonumber(save.vpSurgeTrashDefeatCount) or 0)
+    end
+
+    local function inSurgesUpperTrashSpot()
+      local ow=gameRef and gameRef.overworld
+      if not (ow and ow.map and ow.map.id==VERMILION_GYM_TRASH and ow.player) then return false end
+      local fx,fy
+      if type(ow.player.facingCell)=="function" then fx,fy=ow.player:facingCell() end
+      fx=tonumber(fx); fy=tonumber(fy)
+      -- Surge stands at (5,1) in the native map. His decorative empty trash can
+      -- is the only trash interaction in this small upper room. Restricting the
+      -- hook to this band prevents any of the downstairs switch cans from ever
+      -- entering the reward system.
+      return fx and fy and fy<=3 and fx>=2 and fx<=8
+    end
+
+    local function machineItemForMove(moveId)
+      local items=gameRef and gameRef.data and gameRef.data.items or {}
+      for id,def in pairs(items) do
+        if type(def)=="table" and type(def.machine)=="table" and def.machine.move==moveId then return id end
+      end
+      return nil
+    end
+
+    local function addInventory(id,qty)
+      local save=surgeTrashSave()
+      if not (save and id) then return false end
+      save.inventory=save.inventory or {}
+      save.inventory[id]=math.min(99,(tonumber(save.inventory[id]) or 0)+(qty or 1))
+      return true
+    end
+
+    local rewardTable={
+      {weight=20,kind="item",id="RARE_CANDY",qty=1,label="RARE CANDY"},
+      {weight=4, kind="item",id="RARE_CANDY",qty=5,label="5 RARE CANDIES"},
+      {weight=3, kind="item",id="HP_UP",qty=1,label="HP UP"},
+      {weight=3, kind="item",id="PROTEIN",qty=1,label="PROTEIN"},
+      {weight=3, kind="item",id="IRON",qty=1,label="IRON"},
+      {weight=3, kind="item",id="CARBOS",qty=1,label="CARBOS"},
+      {weight=3, kind="item",id="CALCIUM",qty=1,label="CALCIUM"},
+      {weight=6, kind="item",id="NUGGET",qty=1,label="NUGGET"},
+      {weight=4, kind="item",id="MAX_ELIXER",qty=1,label="MAX ELIXIR"},
+      {weight=4, kind="item",id="MAX_ETHER",qty=1,label="MAX ETHER"},
+      {weight=4, kind="item",id="MAX_REVIVE",qty=1,label="MAX REVIVE"},
+      {weight=4, kind="item",id="THUNDER_STONE",qty=1,label="THUNDER STONE"},
+      {weight=4, kind="tm",move="THUNDERBOLT",label="TM24 THUNDERBOLT"},
+      {weight=4, kind="tm",move="THUNDER",label="TM25 THUNDER"},
+      {weight=4, kind="tm",move="THUNDER_WAVE",label="TM45 THUNDER WAVE"},
+      {weight=4, kind="tm",move="HYPER_BEAM",label="TM15 HYPER BEAM"},
+      {weight=4, kind="tm",move="EXPLOSION",label="TM47 EXPLOSION"},
+      {weight=10,kind="coins",qty=3000,label="3000 COINS"},
+    }
+
+    local function rollSurgeTrashReward()
+      local rng=(love and love.math and love.math.random) or math.random
+      local roll=rng(100)
+      local running=0
+      for _,r in ipairs(rewardTable) do
+        running=running+r.weight
+        if roll<=running then return r,roll end
+      end
+      return rewardTable[1],roll
+    end
+
+    local function claimSurgeTrashReward()
+      local save=surgeTrashSave()
+      if not save or not surgeTrashReady() then return nil end
+      local reward,roll=rollSurgeTrashReward()
+      local label=reward.label
+      if reward.kind=="coins" then
+        save.coins=math.min(9999,(tonumber(save.coins) or 0)+(reward.qty or 0))
+      elseif reward.kind=="tm" then
+        local id=machineItemForMove(reward.move)
+        if not id then
+          -- Machine data should always resolve, but never burn a claim because
+          -- of a runtime naming difference. Fall back to the common candy.
+          reward={kind="item",id="RARE_CANDY",qty=1,label="RARE CANDY"}
+          label=reward.label
+          addInventory(reward.id,reward.qty)
+        else
+          addInventory(id,1)
+        end
+      else
+        addInventory(reward.id,reward.qty or 1)
+      end
+      save.vpSurgeTrashClaimCount=tonumber(save.vpSurgeTrashDefeatCount) or 0
+      mod.log:info("v1.2.1-test47 Surge trash claim roll="..tostring(roll).." reward="..tostring(label))
+
+      local found="Hm? Something's buried in the trash!\f"
+      if reward.kind=="coins" then
+        local hasCase=(save.inventory and (save.inventory.COIN_CASE or 0)>0)
+        if hasCase then return found.."Found 3000 COINS!\fThey were added to the COIN CASE." end
+        return found.."Found 3000 COINS!"
+      elseif reward.id=="RARE_CANDY" and (reward.qty or 1)==5 then
+        return found.."Found 5 RARE CANDIES!"
+      end
+      return found.."Found "..tostring(label).."!"
+    end
+
+    -- Arm the original story defeat through the normal battle lifecycle.
+    -- Vermilion battle handler and is armed there below to avoid double-counts.
+    mod.events:on("battle.started",function(ev)
+      local battle=ev and ev.battle
+      if not battle or battle.kind~="trainer" or battle.oppClass~=SURGE_TRASH_CLASS then return end
+      if battle._vpSurgeTrashWrapped then return end
+      battle._vpSurgeTrashWrapped=true
+      local nativeFinish=battle.onFinish
+      battle.onFinish=function(result)
+        if result=="win" then armSurgeTrashReward() end
+        if nativeFinish then return nativeFinish(result) end
+      end
+    end)
+
+    mod.events:on("game.ready",function() ensureSurgeTrashState() end)
+
+    -- Let vanilla identify/render the trash-can interaction, then replace only
+    -- its ordinary empty-can line in Surge's upper room when a reward is armed.
+    if TextBox and type(TextBox.new)=="function" and not TextBox._vanillaPlusSurgeTrashTest47 then
+      local nativeTrashTextBoxNew=TextBox.new
+      TextBox.new=function(game,text,onDone,opts)
+        if type(text)=="string" and surgeTrashReady() and inSurgesUpperTrashSpot() then
+          local normalized=text:lower():gsub("[^a-z]+"," ")
+          if normalized:find("only trash here",1,true) then
+            local replacement=claimSurgeTrashReward()
+            if replacement then
+              text=vpFormatDialogue(replacement)
+            end
+          end
+        end
+        return nativeTrashTextBoxNew(game,text,onDone,opts)
+      end
+      TextBox._vanillaPlusSurgeTrashTest47=true
+    end
+
+  end
+
+  -- Post-Champion TM mart expansion + Celadon PP UP (test48) -------------
+  do
+    local okShop,ShopMenu=pcall(require,"src.ui.ShopMenu")
+    local okList,ListMenu=pcall(require,"src.ui.ListMenu")
+    local Font=require("src.render.Font")
+    -- Values are move IDs, resolved to the cartridge's actual TM item id at
+    -- runtime. This keeps the table universal across Red/Blue/Yellow.
+    local extraMovesByMap={
+      PEWTER_MART={"FISSURE","DIG","ROCK_SLIDE"},
+      CERULEAN_MART={"WATER_GUN","ICE_BEAM","BLIZZARD","REST"},
+      VERMILION_MART={"THUNDER","SWIFT","THUNDER_WAVE"},
+      LAVENDER_MART={"MEGA_DRAIN","PSYCHIC_M","TELEPORT","DREAM_EATER","PSYWAVE"},
+      FUCHSIA_MART={"WHIRLWIND","RAGE","SELFDESTRUCT","EXPLOSION"},
+      SAFFRON_MART={"TOXIC","COUNTER","SEISMIC_TOSS","MIMIC","BIDE","TRI_ATTACK"},
+      CINNABAR_MART={"BUBBLEBEAM","METRONOME","SKULL_BASH"},
+      VIRIDIAN_MART={"BODY_SLAM","DOUBLE_EDGE","EARTHQUAKE"},
+      INDIGO_PLATEAU_LOBBY={"FIRE_BLAST","SKY_ATTACK"},
+      CELADON_MART_2F={"SWORDS_DANCE","PAY_DAY","SOLARBEAM","THUNDERBOLT","SOFTBOILED"},
+    }
+    local function champion48(game)
+      local flags=game and game.save and game.save.flags or {}
+      return flags.EVENT_BEAT_CHAMPION_RIVAL and true or false
+    end
+    local function machineItem48(game,moveId)
+      local items=game and game.data and game.data.items or {}
+      for id,def in pairs(items) do
+        if type(def)=="table" and type(def.machine)=="table" and def.machine.move==moveId then
+          return id
+        end
+      end
+      return nil
+    end
+    local function resolveMoves48(game,moves)
+      local ids={}
+      for _,move in ipairs(moves or {}) do
+        local id=machineItem48(game,move)
+        if id then ids[#ids+1]=id end
+      end
+      return ids
+    end
+    local function appendUnique48(stock,ids)
+      local out,seen={},{}
+      for _,id in ipairs(stock or {}) do out[#out+1]=id; seen[id]=true end
+      for _,id in ipairs(ids or {}) do
+        if not seen[id] then out[#out+1]=id; seen[id]=true end
+      end
+      return out
+    end
+    local function stockHasTM48(game,stock)
+      for _,id in ipairs(stock or {}) do
+        local def=game.data.items[id]
+        if def and def.machine and tostring(id):sub(1,2)~="HM" then return true end
+      end
+      return false
+    end
+    local function stockHasVitamin48(stock)
+      local hit=0
+      local vitamin={HP_UP=true,PROTEIN=true,IRON=true,CARBOS=true,CALCIUM=true}
+      for _,id in ipairs(stock or {}) do if vitamin[id] then hit=hit+1 end end
+      return hit>=3
+    end
+    -- TM MARTS BUY/SELL layout (test54).
+    -- Gen I only gives the stock list 160 horizontal pixels. Long full TM labels
+    -- and 4-digit prices physically cannot coexist legibly on one row. Keep the
+    -- complete TM## MOVE NAME in the list and place the selected TM's price in
+    -- the existing footer/message box. Ordinary items retain normal inline prices.
+    if false and okList and ListMenu and type(ListMenu.drawItemBox)=="function"
+       and not ListMenu._vanillaPlusTMMartFooterTest54 then
+      local nativeDrawItemBox=ListMenu.drawItemBox
+      function ListMenu:drawItemBox()
+        if not (mod.options:get("tm_marts") and self.dialogue and self.itemBox) then
+          return nativeDrawItemBox(self)
+        end
+        local Theme=require("src.ui.Theme")
+        local Strings=require("src.core.Strings")
+        local TextBox=require("src.render.TextBox")
+        love.graphics.setColor(1,1,1,1)
+        Font.drawBox(0,2,20,11)
+        love.graphics.setColor(0,0,0,1)
+        if #self.items==0 then Font.draw(Strings("Nothing here."),24,32) end
+        local shown,sawCancel=0,false
+        local selectedTMPrice=nil
+        for row=1,self.rows do
+          local i=self.scroll+row; local item=self.items[i]; if not item then break end
+          shown=shown+1; if item.cancel then sawCancel=true end
+          local y=32+(row-1)*16
+          local label=tostring(item.label or "")
+          local rhs=item.sub or item.price or item.right
+          local isTM=label:match("^TM%d%d%s") ~= nil
+          Font.draw(label,16,y)
+          if rhs and not isTM then Font.draw(rhs,152-Font.width(rhs),y) end
+          if i==self.index then
+            Font.drawCode(self.hollowIndex==i and Theme.cursorHollow or Theme.cursor,8,y)
+            if isTM and rhs then selectedTMPrice=rhs end
+          end
+          if self.swapIndex==i and i~=self.index then Font.drawCode(Theme.cursorHollow,8,y) end
+        end
+        if shown==self.rows and not sawCancel then Font.drawCode(Theme.moreArrow,144,88) end
+        if self.messageBox or self.footer or selectedTMPrice then
+          Font.drawBox(0,12,20,6); love.graphics.setColor(0,0,0,1)
+          local y=112
+          if selectedTMPrice then
+            Font.draw("PRICE "..tostring(selectedTMPrice),8,y)
+            y=y+16
+          end
+          if self.footer then
+            local flat={}
+            for _,page in ipairs(TextBox.paginate(self.footer)) do for _,line in ipairs(page) do flat[#flat+1]=line end end
+            local first=math.max(1,#flat-(selectedTMPrice and 0 or 1))
+            for i=first,#flat do
+              if y<=128 then Font.draw(flat[i],8,y); y=y+16 end
+            end
+          end
+        end
+        love.graphics.setColor(1,1,1,1)
+      end
+      ListMenu._vanillaPlusTMMartFooterTest54=true
+    end
+
+    if okShop and ShopMenu and type(ShopMenu.new)=="function" and not ShopMenu._vanillaPlusPostChampionTMTest48 then
+      local native=ShopMenu.new
+      function ShopMenu.new(game,stock,onQuit)
+        if champion48(game) and mod.options:get("tm_marts") then
+          local mapid=game.overworld and game.overworld.map and game.overworld.map.id
+          if mapid=="INDIGO_PLATEAU_LOBBY" then
+            -- Premium endgame mart: healing/recovery first, PP recovery next,
+            -- field utility next, then the two Indigo TMs at the bottom.
+            local items=game and game.data and game.data.items or {}
+            if items.MAX_ETHER then items.MAX_ETHER.price=2500 end
+            if items.MAX_ELIXER then items.MAX_ELIXER.price=5000 end
+            local tmids=resolveMoves48(game,{"FIRE_BLAST","SKY_ATTACK"})
+            stock={"MAX_POTION","FULL_RESTORE","MAX_REVIVE","MAX_ETHER","MAX_ELIXER","MAX_REPEL"}
+            stock=appendUnique48(stock,tmids)
+          else
+            local moves=extraMovesByMap[mapid]
+            if moves then
+              if mapid~="CELADON_MART_2F" or stockHasTM48(game,stock) then
+                stock=appendUnique48(stock,resolveMoves48(game,moves))
+              end
+            end
+            if mapid=="CELADON_MART_5F" and stockHasVitamin48(stock) then
+              local items=game and game.data and game.data.items or {}
+              if items.PP_UP then items.PP_UP.price=9800 end
+              stock=appendUnique48(stock,{"PP_UP"})
+            end
+          end
+        end
+        return native(game,stock,onQuit)
+      end
+      ShopMenu._vanillaPlusPostChampionTMTest48=true
+    end
+  end
+
+  -- Selective visible-pickup modernization (test48) -----------------------
+  do
+    local TextBox=require("src.render.TextBox")
+    local Bag=require("src.inventory.Bag")
+    local okOW,OverworldState=pcall(require,"src.world.OverworldController")
+    local pickup48={
+      VIRIDIAN_FOREST={VIRIDIANFOREST_POKE_BALL={id="POKE_BALL",qty=5}},
+      MT_MOON_1F={
+        MTMOON1F_POTION1={id="POTION",qty=3},
+        MTMOON1F_ESCAPE_ROPE={id="ESCAPE_ROPE",qty=2},
+      },
+      SS_ANNE_2F_ROOMS={
+        SSANNE2FROOMS_MAX_ETHER={id="MAX_ETHER",qty=2},
+      },
+      ROCKET_HIDEOUT_B1F={
+        ROCKETHIDEOUTB1F_ESCAPE_ROPE={id="REVIVE",qty=2},
+        ROCKETHIDEOUTB1F_HYPER_POTION={id="HYPER_POTION",qty=2},
+      },
+      ROCKET_HIDEOUT_B2F={ROCKETHIDEOUTB2F_SUPER_POTION={id="NUGGET",qty=1}},
+      WARDENS_HOUSE={WARDENSHOUSE_RARE_CANDY={id="RARE_CANDY",qty=2}},
+      POKEMON_TOWER_3F={POKEMONTOWER3F_ESCAPE_ROPE={id="FULL_HEAL",qty=2}},
+      POKEMON_TOWER_4F={
+        POKEMONTOWER4F_ELIXER={id="ELIXER",qty=2},
+        POKEMONTOWER4F_AWAKENING={id="AWAKENING",qty=3},
+        POKEMONTOWER4F_HP_UP={id="HP_UP",qty=2},
+      },
+      POKEMON_TOWER_5F={POKEMONTOWER5F_NUGGET={id="NUGGET",qty=2}},
+      POKEMON_TOWER_6F={POKEMONTOWER6F_RARE_CANDY={id="RARE_CANDY",qty=2}},
+      SILPH_CO_3F={SILPHCO3F_HYPER_POTION={id="HYPER_POTION",qty=3}},
+      SILPH_CO_4F={
+        SILPHCO4F_FULL_HEAL={id="FULL_HEAL",qty=3},
+        SILPHCO4F_MAX_REVIVE={id="MAX_REVIVE",qty=2},
+      },
+      SILPH_CO_6F={SILPHCO6F_HP_UP={id="HP_UP",qty=2}},
+      SAFARI_ZONE_EAST={
+        SAFARIZONEEAST_FULL_RESTORE={id="FULL_RESTORE",qty=2},
+      },
+      SAFARI_ZONE_WEST={SAFARIZONEWEST_MAX_POTION={id="MAX_POTION",qty=2}},
+      POKEMON_MANSION_1F={POKEMONMANSION1F_ESCAPE_ROPE={id="HYPER_POTION",qty=2}},
+      POKEMON_MANSION_3F={POKEMONMANSION3F_MAX_POTION={id="MAX_POTION",qty=2}},
+      POKEMON_MANSION_B1F={POKEMONMANSIONB1F_FULL_RESTORE={id="FULL_RESTORE",qty=2}},
+      POWER_PLANT={
+        POWERPLANT_CARBOS={id="CARBOS",qty=2},
+        POWERPLANT_RARE_CANDY={id="RARE_CANDY",qty=2},
+      },
+      VICTORY_ROAD_1F={VICTORYROAD1F_RARE_CANDY={id="RARE_CANDY",qty=3}},
+      VICTORY_ROAD_2F={VICTORYROAD2F_FULL_HEAL={id="FULL_RESTORE",qty=2}},
+      VICTORY_ROAD_3F={VICTORYROAD3F_MAX_REVIVE={id="MAX_REVIVE",qty=2}},
+    }
+    -- TEST51 QA ONLY: visibly respawn five representative pickups on map entry.
+    -- Clearing save.itemsTaken before/after CONTINUE proved timing-sensitive, so
+    -- this QA path reconstructs the original map object after the map is loaded.
+    -- Each representative object is re-added only until the player collects it
+    -- once in test51; normal bundle collection then removes it as usual.
+    local rearm51={
+      VIRIDIAN_FOREST="VIRIDIANFOREST_POKE_BALL",
+      MT_MOON_1F="MTMOON1F_ESCAPE_ROPE",
+      ROCKET_HIDEOUT_B1F="ROCKETHIDEOUTB1F_ESCAPE_ROPE",
+      POWER_PLANT="POWERPLANT_RARE_CANDY",
+      VICTORY_ROAD_1F="VICTORYROAD1F_RARE_CANDY",
+    }
+    local okNPC51,NPC51=pcall(require,"src.world.NPC")
+    local function qaKey51(mapid) return "vpPickupQACollectedTest51_"..tostring(mapid) end
+    local function respawnRepresentativePickup51(ev)
+      local mapid=ev and ev.mapId
+      local wanted=mapid and rearm51[mapid]
+      local save=gameRef and gameRef.save
+      if not wanted or not save or save[qaKey51(mapid)] or not (okNPC51 and NPC51) then return end
+      local ow=gameRef and gameRef.stack and gameRef.stack:top()
+      if not (ow and ow.map and ow.map.id==mapid) then return end
+      -- Avoid duplicates if the original ball was never collected on this save.
+      for _,n in ipairs(ow.npcs or {}) do
+        if n and n.def and n.def.name==wanted then return end
+      end
+      local def=nil
+      local sourceObjects=(ow.map.def and ow.map.def.objects)
+        or (gameRef.data and gameRef.data.maps and gameRef.data.maps[mapid] and gameRef.data.maps[mapid].objects)
+        or {}
+      for _,obj in ipairs(sourceObjects) do
+        if obj.name==wanted then def=obj; break end
+      end
+      if not def then
+        mod.log:warn("v1.2.1-test51 QA pickup definition not found "..tostring(mapid).." / "..tostring(wanted))
+        return
+      end
+      local copy={}
+      for k,v in pairs(def) do copy[k]=v end
+      -- Use a QA-only index so the constructor cannot inherit the original
+      -- object's already-taken save id. The bundle hook still keys by def.name.
+      copy.index=240
+      local npc=NPC51.new(gameRef.data,mapid,copy)
+      npc.vpQARearmed51=true
+      npc.vpQAOriginalName51=wanted
+      table.insert(ow.npcs,npc); table.insert(ow.entities,npc)
+      mod.log:info("v1.2.1-test51 visibly re-armed QA pickup "..tostring(mapid).." / "..tostring(wanted))
+    end
+    mod.events:on("map.entered",respawnRepresentativePickup51)
+
+    local function pickupRule48(self,npc)
+      if not (self and self.map and npc and npc.def) then return nil end
+      local byMap=pickup48[self.map.id]
+      if not byMap then return nil end
+      return byMap[npc.def.name]
+    end
+    local function removePickupNpc48(self,npc)
+      local save=gameRef and gameRef.save
+      save.itemsTaken=save.itemsTaken or {}
+      save.itemsTaken[npc.id]=true
+      if npc.vpQARearmed51 and self.map and self.map.id then
+        save["vpPickupQACollectedTest51_"..tostring(self.map.id)]=true
+      end
+      for i,n in ipairs(self.npcs or {}) do if n==npc then table.remove(self.npcs,i) break end end
+      for i,e in ipairs(self.entities or {}) do if e==npc then table.remove(self.entities,i) break end end
+    end
+    if okOW and OverworldState and type(OverworldState.talkTo)=="function"
+       and not OverworldState._vanillaPlusPickupBundlesTest48 then
+      local native=OverworldState.talkTo
+      function OverworldState:talkTo(npc)
+        local rule=pickupRule48(self,npc)
+        if rule and npc.def.item and npc.def.item~="0" and npc.def.item~=0 then
+          npc.frozen=true
+          local save=gameRef.save
+          if not Bag.add(save,rule.id,rule.qty or 1,gameRef.data) then
+            gameRef.stack:push(TextBox.new(gameRef,vpFormatDialogue("No more room for items!"),
+              function() npc.frozen=false end))
+            return
+          end
+          removePickupNpc48(self,npc)
+          local def=gameRef.data.items[rule.id]
+          local name=def and def.name or rule.id
+          local qty=rule.qty or 1
+          local count=(qty>1) and ("x"..tostring(qty).." ") or ""
+          -- One textbox/page. The old form-feed produced PLAYER found, an
+          -- empty-looking beat, then the quantity on a second page.
+          local message=tostring(save.player and save.player.name or "PLAYER").." found\n"..count..tostring(name).."!"
+          gameRef.stack:push(TextBox.new(gameRef,vpFormatDialogue(message),nil,
+            TextBox.soundOpts(gameRef,(def and def.keyItem) and "Get_Key_Item" or "Get_Item1")))
+          return
+        end
+        return native(self,npc)
+      end
+      OverworldState._vanillaPlusPickupBundlesTest48=true
+    end
+  end
+
+  -- Post-Champion Trainer AI diagnostic (test31) ---------------------------
+  -- Test24 proved substantially better move selection and Test25 proved the
+  -- six-Pokemon finite-bag / battle-state layer. Test31 retains team management:
+  -- matchup-aware replacement after a KO plus conservative voluntary tactical
+  -- switching. Other trainer battles keep the proven smarter move scorer; wild
+  -- battles remain untouched.
+  do
+    local okAI, TrainerAI = pcall(require, "src.battle.TrainerAI")
+    local okChart, TypeChart = pcall(require, "src.battle.TypeChart")
+    local okTurn, TurnOrder = pcall(require, "src.battle.TurnOrder")
+    local okBattleState, BattleState = pcall(require, "src.battle.BattleState")
+
+    local function championAIReady(battle)
+      local g = battle and battle.game
+      local save = g and g.save or (gameRef and gameRef.save)
+      local flags = save and save.flags or {}
+      return battle and battle.kind == "trainer"
+        and flags.EVENT_BEAT_CHAMPION_RIVAL
+    end
+
+    local function isLassTestBattle(battle)
+      return battle and battle._vpRoute8LassNpcId ~= nil
+        and type(battle._vpLassInventory) == "table"
+    end
+
+    local function typeMultiplier(moveType, targetTypes)
+      if not (okChart and TypeChart and TypeChart.rows and moveType) then return 1 end
+      local rows = TypeChart.rows(moveType, targetTypes or {}) or {}
+      if #rows == 0 then return 1 end
+      local mult = 1
+      for _, value in ipairs(rows) do
+        mult = mult * ((tonumber(value) or 10) / 10)
+      end
+      return mult
+    end
+
+    local function effectiveSpeed(battler)
+      if okTurn and TurnOrder and TurnOrder.effectiveSpeed then
+        return TurnOrder.effectiveSpeed(battler)
+      end
+      return battler and battler.curStats and battler.curStats.speed or 0
+    end
+
+    local STATUS_MOVE_SCORE = {
+      SING = 95,
+      SLEEP_POWDER = 100,
+      HYPNOSIS = 95,
+      LOVELY_KISS = 105,
+      SPORE = 120,
+      THUNDER_WAVE = 90,
+      STUN_SPORE = 82,
+      GLARE = 88,
+      TOXIC = 84,
+      POISONPOWDER = 72,
+      CONFUSE_RAY = 76,
+      SUPERSONIC = 60,
+      LEECH_SEED = 78,
+    }
+
+    local HEAL_MOVE_SCORE = {
+      SOFTBOILED = 145,
+      RECOVER = 145,
+      REST = 130,
+    }
+
+    local SETUP_MOVE_SCORE = {
+      SWORDS_DANCE = 78,
+      AMNESIA = 82,
+      AGILITY = 68,
+      GROWTH = 65,
+      HARDEN = 42,
+      WITHDRAW = 42,
+      DEFENSE_CURL = 42,
+      LIGHT_SCREEN = 60,
+      REFLECT = 60,
+      MINIMIZE = 58,
+      DOUBLE_TEAM = 58,
+    }
+
+    local FIXED_DAMAGE = {
+      SEISMIC_TOSS = true,
+      NIGHT_SHADE = true,
+      DRAGON_RAGE = true,
+      SONICBOOM = true,
+      SUPER_FANG = true,
+    }
+
+    local OHKO_MOVE = { FISSURE = true, HORN_DRILL = true, GUILLOTINE = true }
+
+    local function moveUsable(battle, index, move)
+      if not move then return false end
+      local enemy = battle.enemy
+      if enemy and enemy.disabledSlot == index then return false end
+      local unlimited = battle.ruleset and battle.ruleset.enemyUnlimitedPP
+      return unlimited or (move.pp or 0) > 0
+    end
+
+    local function ohkoViable(battle, move)
+      if not (battle and move and OHKO_MOVE[move.id]) then return false end
+      local def = battle.data and battle.data.moves and battle.data.moves[move.id]
+      if not def then return false end
+      local enemy, target = battle.enemy, battle.player
+      if not enemy or not target then return false end
+      -- Gen I OHKO moves automatically fail when the user is slower.
+      if effectiveSpeed(enemy) < effectiveSpeed(target) then return false end
+      -- They still respect type immunity (Fissure vs Flying, Horn Drill vs Ghost).
+      if typeMultiplier(def.type, target.curTypes or {}) <= 0 then return false end
+      return true
+    end
+
+    local function scoreMove(battle, move)
+      local def = battle.data and battle.data.moves and battle.data.moves[move.id]
+      if not def then return -1000 end
+
+      local enemy = battle.enemy
+      local target = battle.player
+      local hp = enemy and enemy.mon and enemy.mon.hp or 1
+      local maxHP = enemy and enemy.mon and enemy.mon.stats and enemy.mon.stats.hp or hp
+      local hpRatio = maxHP > 0 and hp / maxHP or 1
+
+      -- OHKO judgment is explicit in test27. X Accuracy makes a viable OHKO
+      -- enormously attractive, but no amount of accuracy can defeat the Gen I
+      -- speed gate or a type immunity. This is especially important for
+      -- Snorlax: Fissure is present partly to prove the AI can refuse it.
+      if OHKO_MOVE[move.id] then
+        if not ohkoViable(battle, move) then return -600 end
+        if enemy and enemy.xAccuracy then return 235 end
+        return 58
+      end
+
+      -- Strong healing logic: recover when actually hurt, strongly avoid
+      -- wasting healing at high HP. Rest also cures status, so status raises
+      -- its value, while sleeping already makes choosing Rest pointless.
+      if HEAL_MOVE_SCORE[move.id] then
+        if move.id == "REST" and enemy and enemy.mon and enemy.mon.status == "SLP" then
+          return -100
+        end
+        local bonus = (enemy and enemy.mon and enemy.mon.status) and 18 or 0
+        if hpRatio <= 0.25 then return HEAL_MOVE_SCORE[move.id] + 55 + bonus end
+        if hpRatio <= 0.45 then return HEAL_MOVE_SCORE[move.id] + 25 + bonus end
+        if hpRatio <= 0.65 then return HEAL_MOVE_SCORE[move.id] - 20 + bonus end
+        return 5 + bonus
+      end
+
+      -- Do not repeatedly throw major status at an already-statused target.
+      if STATUS_MOVE_SCORE[move.id] then
+        if target and target.mon and target.mon.status then return 8 end
+        return STATUS_MOVE_SCORE[move.id]
+      end
+
+      -- Setup has value only while the board permits it. AMNESIA gets an
+      -- additional diagnostic heuristic: Snorlax values it much more against
+      -- a target whose Special exceeds its Attack, and stops stacking once its
+      -- Special stage is already high. This tests situational setup rather
+      -- than "click Amnesia because Amnesia exists."
+      if SETUP_MOVE_SCORE[move.id] then
+        local stageName = move.id == "AMNESIA" and "special" or nil
+        local stage = stageName and ((enemy.stages and enemy.stages[stageName]) or 0) or 0
+        if stage >= 4 then return 8 end
+        if hpRatio < 0.45 then return 12 end
+
+        local base = SETUP_MOVE_SCORE[move.id]
+        if move.id == "AMNESIA" and target and target.mon and target.mon.stats then
+          local ts = target.mon.stats
+          if (ts.special or 0) > (ts.attack or 0) then base = base + 30
+          elseif (ts.attack or 0) > (ts.special or 0) * 1.20 then base = base - 28 end
+        end
+        if stage >= 2 then base = base - 30 end
+        local turn = battle.turnCount or 0
+        if turn <= 2 and hpRatio > 0.65 then return base + 15 end
+        if hpRatio > 0.70 then return base end
+        return math.max(20, base - 25)
+      end
+
+      if FIXED_DAMAGE[move.id] then
+        if move.id == "SUPER_FANG" then
+          local thp = target and target.mon and target.mon.hp or 1
+          return thp > 1 and 105 or 10
+        end
+        return 105
+      end
+
+      local power = tonumber(def.power) or 0
+      if power <= 0 then return 30 end
+
+      local mult = typeMultiplier(def.type, target and target.curTypes or {})
+      if mult <= 0 then return -500 end
+
+      local score = power * mult
+
+      -- STAB.
+      for _, t in ipairs((enemy and enemy.curTypes) or {}) do
+        if t == def.type then score = score * 1.5 break end
+      end
+
+      -- Accuracy-aware preference.
+      local acc = tonumber(def.accuracy)
+      if acc and acc > 0 then
+        if acc > 100 then score = score * math.min(1, acc / 255)
+        else score = score * math.min(1, acc / 100) end
+      end
+
+      -- Prefer finishing a weakened target instead of getting cute with setup.
+      local targetHP = target and target.mon and target.mon.hp or 9999
+      if targetHP <= math.max(1, power) then score = score + 25 end
+
+      return score
+    end
+
+    local function bestMove(battle)
+      local usable = {}
+      for i, move in ipairs((battle.enemy and battle.enemy.curMoves) or {}) do
+        if moveUsable(battle, i, move) then
+          usable[#usable + 1] = { move = move, score = scoreMove(battle, move) }
+        end
+      end
+      if #usable == 0 then return nil end
+
+      local best = -math.huge
+      for _, row in ipairs(usable) do if row.score > best then best = row.score end end
+      local finalists = {}
+      local threshold = best - math.max(2, math.abs(best) * 0.05)
+      for _, row in ipairs(usable) do
+        if row.score >= threshold then finalists[#finalists + 1] = row.move end
+      end
+      local chosen = finalists[1]
+      if #finalists > 1 and battle.rng then chosen = finalists[battle.rng(1, #finalists)] end
+      return chosen, best
+    end
+
+    -- Track only moves the player has actually attempted in this battle.
+    -- Switching logic may use those revealed moves, but never peeks at the
+    -- player's full moveset or the action selected for the current turn.
+    mod.events:on("battle.turn_started", function(ev)
+      local battle = ev and ev.battle
+      if not isLassTestBattle(battle) then return end
+      local action = ev.playerAction
+      local id = action and action.id
+      local mon = battle.player and battle.player.mon
+      if id and mon then
+        battle._vpSeenPlayerMoves = battle._vpSeenPlayerMoves or {}
+        local seen = battle._vpSeenPlayerMoves[mon] or {}
+        seen[id] = true
+        battle._vpSeenPlayerMoves[mon] = seen
+      end
+    end)
+
+    -- Score a party Pokemon as a switch-in against the player's *current*
+    -- active Pokemon. This intentionally uses only visible/current battle state:
+    -- species/types, actually revealed moves, HP/status and matchup. It never
+    -- reads the player's selected action for the turn.
+    local function rawEffectiveSpeed(mon)
+      local speed = mon and mon.stats and mon.stats.speed or 0
+      if mon and mon.status == "PAR" then speed = math.max(1, math.floor(speed / 4)) end
+      return speed
+    end
+
+    local function candidateSwitchScore(battle, mon, index)
+      if not battle or not mon or (mon.hp or 0) <= 0 then return -math.huge end
+      local pdef = battle.data and battle.data.pokemon and battle.data.pokemon[mon.species]
+      if not pdef then return -math.huge end
+      local target = battle.player
+      if not target then return -math.huge end
+      local targetTypes = target.curTypes or {}
+      local ownTypes = pdef.types or {}
+      local maxHP = mon.stats and mon.stats.hp or math.max(1, mon.hp or 1)
+      local hpRatio = math.max(0, math.min(1, (mon.hp or 0) / math.max(1, maxHP)))
+
+      local score = 18 + hpRatio * 28
+      if mon.status then score = score - 10 end
+
+      -- Offensive ceiling into the current opponent. STAB and super-effective
+      -- coverage matter; fixed-damage moves retain useful but not absurd value.
+      local bestOffense = 0
+      for _, move in ipairs(mon.moves or {}) do
+        local mdef = battle.data and battle.data.moves and battle.data.moves[move.id]
+        if mdef then
+          local power = tonumber(mdef.power) or 0
+          local mult = typeMultiplier(mdef.type, targetTypes)
+          local value = 0
+          if OHKO_MOVE[move.id] then
+            local speedOK = rawEffectiveSpeed(mon) >= effectiveSpeed(target)
+            if speedOK and mult > 0 then value = 90 else value = 0 end
+          elseif FIXED_DAMAGE[move.id] then
+            value = 48 * mult
+          elseif power > 0 and mult > 0 then
+            value = power * mult
+            for _, t in ipairs(ownTypes) do
+              if t == mdef.type then value = value * 1.18 break end
+            end
+          elseif STATUS_MOVE_SCORE[move.id] and not (target.mon and target.mon.status) then
+            value = STATUS_MOVE_SCORE[move.id] * 0.45
+          end
+          if value > bestOffense then bestOffense = value end
+        end
+      end
+      score = score + math.min(95, bestOffense * 0.42)
+
+      -- Defensive matchup against moves the player currently has on screen.
+      -- We do not predict which one the player chose this turn. A candidate
+      -- that is immune/resistant to several known attacks gets rewarded;
+      -- something weak to the player's strongest coverage gets penalized.
+      local worstThreat, resistCredit = 0, 0
+      local seen = battle._vpSeenPlayerMoves and target.mon
+        and battle._vpSeenPlayerMoves[target.mon] or {}
+      for moveId in pairs(seen or {}) do
+        local mdef = battle.data and battle.data.moves and battle.data.moves[moveId]
+        if mdef and (tonumber(mdef.power) or 0) > 0 then
+          local mult = typeMultiplier(mdef.type, ownTypes)
+          local threat = (tonumber(mdef.power) or 0) * mult
+          if threat > worstThreat then worstThreat = threat end
+          if mult == 0 then resistCredit = resistCredit + 20
+          elseif mult < 1 then resistCredit = resistCredit + 7 end
+        end
+      end
+      score = score + math.min(28, resistCredit) - math.min(70, worstThreat * 0.22)
+
+      -- Preserve premium healthy pieces slightly, but do not hard-code an
+      -- order. These are tie-shapers, not commands.
+      local role = {
+        NIDOKING = 7, NIDOQUEEN = 6, SNORLAX = 5,
+        CHANSEY = 4, CLEFABLE = 3, WIGGLYTUFF = 2,
+      }
+      score = score + (role[mon.species] or 0)
+      return score
+    end
+
+    local function bestSwitchCandidate(battle)
+      local bestIndex, bestScore = nil, -math.huge
+      for i, mon in ipairs(battle.enemyParty or {}) do
+        if i ~= battle.enemyIndex and (mon.hp or 0) > 0 then
+          local score = candidateSwitchScore(battle, mon, i)
+          if score > bestScore then bestIndex, bestScore = i, score end
+        end
+      end
+      return bestIndex, bestScore
+    end
+
+    local function activeSwitchScore(battle)
+      if not battle or not battle.enemy or not battle.enemy.mon then return -math.huge end
+      return candidateSwitchScore(battle, battle.enemy.mon, battle.enemyIndex)
+    end
+
+    local function voluntarySwitchAction(battle)
+      if not isLassTestBattle(battle) then return nil end
+      local enemy = battle.enemy
+      if not enemy or not enemy.mon or (enemy.mon.hp or 0) <= 0 then return nil end
+
+      -- Do not throw away a meaningful setup state just because another mon is
+      -- marginally prettier on paper.
+      local stages = enemy.stages or {}
+      local setup = math.max(stages.attack or 0, stages.defense or 0,
+        stages.speed or 0, stages.special or 0, stages.accuracy or 0,
+        stages.evasion or 0)
+      if setup >= 2 or enemy.xAccuracy then return nil end
+
+      local turn = battle.turnCount or 0
+      if battle._vpLastVoluntarySwitchTurn
+         and turn - battle._vpLastVoluntarySwitchTurn < 2 then return nil end
+
+      local idx, candidate = bestSwitchCandidate(battle)
+      if not idx then return nil end
+      local active = activeSwitchScore(battle)
+      local hp = enemy.mon.hp or 0
+      local maxHP = enemy.mon.stats and enemy.mon.stats.hp or math.max(1, hp)
+      local hpRatio = hp / math.max(1, maxHP)
+
+      -- Test27 restraint: voluntary switches require a clearly superior matchup,
+      -- and the two-turn cooldown prevents ping-pong. Only a critically wounded
+      -- active mon gets the somewhat smaller escape threshold.
+      local margin = hpRatio < 0.30 and 30 or 50
+      if candidate < active + margin then return nil end
+
+      battle._vpLastVoluntarySwitchTurn = turn
+      mod.log:info("v1.2.1-test27 Lass AI chose SWITCH "
+        .. tostring(battle.enemyIndex) .. "->" .. tostring(idx)
+        .. " active=" .. tostring(active) .. " candidate=" .. tostring(candidate))
+      return { special = "aiSwitch", index = idx }
+    end
+
+    -- Native Gen1Recomp replaces a fainted enemy by scanning party slots for
+    -- the first healthy mon. For this one diagnostic battle, temporarily mask
+    -- the other healthy slots during that synchronous scan so the engine picks
+    -- our matchup-aware choice. HP is restored immediately afterward; the
+    -- engine keeps the chosen enemyIndex and owns all normal send-out/UI flow.
+    if okBattleState and BattleState and type(BattleState.enemyMonFainted) == "function"
+       and not BattleState._vanillaPlusTest27Replacement then
+      local nativeEnemyMonFainted = BattleState.enemyMonFainted
+      BattleState.enemyMonFainted = function(battle, ...)
+        if isLassTestBattle(battle) then
+          local idx, score = bestSwitchCandidate(battle)
+          if idx then
+            local masked = {}
+            for i, mon in ipairs(battle.enemyParty or {}) do
+              if i ~= idx and (mon.hp or 0) > 0 then
+                masked[i] = mon.hp
+                mon.hp = 0
+              end
+            end
+            mod.log:info("v1.2.1-test27 Lass replacement chose slot="
+              .. tostring(idx) .. " score=" .. tostring(score))
+            local out = nativeEnemyMonFainted(battle, ...)
+            for i, hp in pairs(masked) do
+              if battle.enemyParty[i] then battle.enemyParty[i].hp = hp end
+            end
+            return out
+          end
+        end
+        return nativeEnemyMonFainted(battle, ...)
+      end
+      BattleState._vanillaPlusTest27Replacement = true
+    end
+
+    local function bagCount(battle, id)
+      local bag = battle and battle._vpLassInventory
+      return (bag and tonumber(bag[id])) or 0
+    end
+
+    local function spendBag(battle, id)
+      local bag = battle and battle._vpLassInventory
+      if not bag or (bag[id] or 0) <= 0 then return false end
+      bag[id] = bag[id] - 1
+      mod.log:info("v1.2.1-test27 Lass spent " .. id .. "; left=" .. tostring(bag[id]))
+      return true
+    end
+
+    local REVIVE_VALUE = {
+      NIDOKING = 55, NIDOQUEEN = 52, CHANSEY = 50,
+      SNORLAX = 48, CLEFABLE = 44, WIGGLYTUFF = 40,
+    }
+
+    local function reviveCandidate(battle)
+      local bestIndex, bestScore = nil, -math.huge
+      local targetTypes = battle.player and battle.player.curTypes or {}
+      for i, mon in ipairs(battle.enemyParty or {}) do
+        if (mon.hp or 0) <= 0 then
+          local score = REVIVE_VALUE[mon.species] or 30
+          -- Reward a fainted teammate that owns useful coverage into the
+          -- currently active player Pokemon. This is matchup-aware targeting,
+          -- not simply "revive the first dead slot."
+          for _, move in ipairs(mon.moves or {}) do
+            local def = battle.data and battle.data.moves and battle.data.moves[move.id]
+            if def and (tonumber(def.power) or 0) > 0 then
+              local mult = typeMultiplier(def.type, targetTypes)
+              if mult > 1 then score = score + 18 * mult end
+            end
+          end
+          if score > bestScore then bestIndex, bestScore = i, score end
+        end
+      end
+      return bestIndex, bestScore
+    end
+
+    local function lassItemAction(battle)
+      local enemy = battle.enemy
+      if not enemy or not enemy.mon then return nil end
+      local hp, maxHP = enemy.mon.hp or 0, enemy.mon.stats and enemy.mon.stats.hp or 1
+      local hpRatio = maxHP > 0 and hp / maxHP or 1
+      local status = enemy.mon.status
+
+      -- Save a critically threatened active Pokemon before spending a turn
+      -- resurrecting somebody else.
+      if bagCount(battle, "FULL_RESTORE") > 0
+         and (hpRatio <= 0.27 or (status and hpRatio <= 0.48)) then
+        if spendBag(battle, "FULL_RESTORE") then
+          return { special = "aiItem", item = "FULL_RESTORE" }
+        end
+      end
+
+      -- Full Heal is for meaningful status when HP does not justify burning a
+      -- much more valuable Full Restore.
+      if status and bagCount(battle, "FULL_HEAL") > 0 and hpRatio > 0.40 then
+        if spendBag(battle, "FULL_HEAL") then
+          return { special = "aiItem", item = "FULL_HEAL" }
+        end
+      end
+
+      -- X Accuracy is deliberately tied to a *currently viable* OHKO line.
+      -- Snorlax must not use it merely because it knows Fissure when the speed
+      -- gate makes Fissure fail.
+      if bagCount(battle, "X_ACCURACY") > 0 and not enemy.xAccuracy and hpRatio > 0.38 then
+        for _, move in ipairs(enemy.curMoves or {}) do
+          if OHKO_MOVE[move.id] and ohkoViable(battle, move) then
+            if spendBag(battle, "X_ACCURACY") then
+              return { special = "aiItem", item = "X_ACCURACY" }
+            end
+          end
+        end
+      end
+
+      -- The single X Attack is reserved for a healthy physical attacker that
+      -- can actually cash in on it. In this test roster that chiefly means
+      -- Snorlax or Wigglytuff, not Chansey wasting everybody's time.
+      local species = enemy.mon.species
+      local atkStage = (enemy.stages and enemy.stages.attack) or 0
+      if bagCount(battle, "X_ATTACK") > 0 and atkStage <= 0 and hpRatio > 0.68
+         and (species == "SNORLAX" or species == "WIGGLYTUFF") then
+        if spendBag(battle, "X_ATTACK") then
+          return { special = "aiItem", item = "X_ATTACK" }
+        end
+      end
+
+      -- Reviving costs a whole turn, so do it only from a reasonably safe
+      -- active position. Pick the best fainted teammate by strategic value and
+      -- current matchup. Max Revive is conserved for a premium target or when
+      -- the roster is getting thin; otherwise spend a normal Revive first.
+      if hpRatio > 0.58 and (bagCount(battle, "REVIVE") > 0 or bagCount(battle, "MAX_REVIVE") > 0) then
+        local idx, value = reviveCandidate(battle)
+        if idx then
+          local alive = 0
+          for _, mon in ipairs(battle.enemyParty or {}) do if (mon.hp or 0) > 0 then alive = alive + 1 end end
+          local item
+          if bagCount(battle, "MAX_REVIVE") > 0 and ((value or 0) >= 70 or alive <= 2) then
+            item = "MAX_REVIVE"
+          elseif bagCount(battle, "REVIVE") > 0 then
+            item = "REVIVE"
+          elseif bagCount(battle, "MAX_REVIVE") > 0 then
+            item = "MAX_REVIVE"
+          end
+          if item and spendBag(battle, item) then
+            battle._vpAIReviveIndex = idx
+            return { special = "aiItem", item = item }
+          end
+        end
+      end
+
+      return nil
+    end
+
+    -- Gen1Recomp's vanilla trainer-item helper handles Full Restore, Full Heal
+    -- and X Attack, but vanilla trainers never carry X Accuracy or Revives.
+    -- Extend that helper only for our diagnostic actions so the normal battle
+    -- queue still owns item turns and animations.
+    if okAI and TrainerAI and type(TrainerAI.useItem) == "function"
+       and not TrainerAI._vanillaPlusTest27Items then
+      local nativeUseItem = TrainerAI.useItem
+      TrainerAI.useItem = function(battle, item)
+        if isLassTestBattle(battle) and item == "X_ACCURACY" then
+          battle.enemy.xAccuracy = true
+          local trainerName = battle.trainer and battle.trainer.name or "TRAINER"
+          return { trainerName .. "\nused X ACCURACY!" }
+        end
+        if isLassTestBattle(battle) and (item == "REVIVE" or item == "MAX_REVIVE") then
+          local idx = battle._vpAIReviveIndex
+          battle._vpAIReviveIndex = nil
+          local mon = idx and battle.enemyParty and battle.enemyParty[idx]
+          if mon and (mon.hp or 0) <= 0 then
+            local maxHP = mon.stats and mon.stats.hp or 1
+            mon.hp = item == "MAX_REVIVE" and maxHP or math.max(1, math.floor(maxHP / 2))
+            local trainerName = battle.trainer and battle.trainer.name or "TRAINER"
+            local pdef = battle.data and battle.data.pokemon and battle.data.pokemon[mon.species]
+            local monName = mon.nickname or (pdef and pdef.name) or mon.species
+            return {
+              trainerName .. "\nused " .. (item == "MAX_REVIVE" and "MAX REVIVE" or "REVIVE") .. "!",
+              monName .. " was\nrevived!",
+            }
+          end
+          return {}
+        end
+        return nativeUseItem(battle, item)
+      end
+      TrainerAI._vanillaPlusTest27Items = true
+    end
+
+    if okAI and TrainerAI and mod.hooks then
+      mod.hooks:wrap("battle.enemy_action", function(next, battle)
+        if not championAIReady(battle) then return next(battle) end
+
+        -- For the Lass stress test we replace her vanilla class-action roll
+        -- with our finite bag reasoning. Forced/locked moves always win first.
+        if isLassTestBattle(battle) then
+          local locked = battle.lockedAction and battle:lockedAction(battle.enemy)
+          if locked then return locked end
+
+          local itemAction = lassItemAction(battle)
+          if itemAction then
+            mod.log:info("v1.2.1-test27 Lass AI chose ITEM " .. tostring(itemAction.item))
+            return itemAction
+          end
+
+          local switchAction = voluntarySwitchAction(battle)
+          if switchAction then return switchAction end
+
+          local chosen, score = bestMove(battle)
+          if chosen then
+            mod.log:info("v1.2.1-test27 Lass AI chose MOVE "
+              .. tostring(chosen.id) .. " score=" .. tostring(score))
+            return chosen
+          end
+          return next(battle)
+        end
+
+        -- Other post-Champion trainers retain test24 behavior: let vanilla
+        -- resolve any class item/switch/forced action, then improve move choice.
+        local vanilla = next(battle)
+        if vanilla and vanilla.special then return vanilla end
+        if vanilla and vanilla.struggle then return vanilla end
+        local locked = battle.lockedAction and battle:lockedAction(battle.enemy)
+        if locked then return vanilla end
+
+        local chosen, score = bestMove(battle)
+        if chosen then
+          mod.log:info("v1.2.1-test27 Champion AI chose "
+            .. tostring(chosen.id) .. " score=" .. tostring(score))
+          return chosen
+        end
+        return vanilla
+      end, 50)
+    end
+  end
 
   -- TELEPORT anywhere: add TELEPORT to the party submenu indoors instead of
   -- changing the move itself. Selection reuses the engine's native escape
@@ -638,9 +2020,7 @@ return function(mod)
   end)
 
   -- Bill's post-Champion Tradeback machine + discovery flow.
-  -- Release behavior: Champion + completed Bill story.  This private QA
-  -- package deliberately removes ONLY the Champion gate so the complete
-  -- discovery/dialogue/evolution path can be tested during the playthrough.
+  -- Unlocks after the player becomes Champion and completes Bill's story.
   do
     local ok, OverworldState = pcall(require, "src.world.OverworldController")
     if ok and OverworldState and not OverworldState._vanillaPlusBillWrapped then
@@ -751,6 +2131,7 @@ return function(mod)
         -- a larger rotating life-dialogue pool. Machine/evolution dialogue is
         -- handled by billsHousePC and therefore always keeps priority.
         if isBill and tradebackUnlocked(game)
+          and mod.options:get("oak_postdex_life")
           and mod.save:get("tradeback_bill_intro_seen_v1") then
           npc:facePlayer(self.player)
           local TextBox = require("src.render.TextBox")
@@ -1289,7 +2670,13 @@ return function(mod)
           else
             pool, key = followerLines, "follower"
           end
-          gameRef.stack:push(TextBox.new(gameRef, shuffleBag(npc, key, pool)))
+          -- Recomp 0.2.55+ can briefly invalidate a captured game stack during
+          -- UI transitions. Never dereference it blindly; custom NPC talk should
+          -- fail closed rather than crash the entire overworld.
+          local g = gameRef
+          if g and g.stack and type(g.stack.push) == "function" then
+            g.stack:push(TextBox.new(g, vpFormatDialogue(shuffleBag(npc, key, pool))))
+          end
           return
         end
         return originalTalkTo(self, npc)
@@ -1331,7 +2718,9 @@ return function(mod)
       removeTagged(ow, "vpChansey")
       if not mod.options:get("center_chansey") then return end
       local mapId = tostring(ow.map and ow.map.id or ""):upper()
-      if not mapId:find("POKECENTER", 1, true) then return end
+      local isHealingLobby = mapId:find("POKECENTER", 1, true) ~= nil
+        or mapId == "INDIGO_PLATEAU_LOBBY"
+      if not isHealingLobby then return end
       local nurse
       for _, n in ipairs(ow.npcs or {}) do
         local name = tostring(n.def and n.def.name or ""):upper()
@@ -2139,13 +3528,13 @@ return function(mod)
       "OLD_ROD", "GOOD_ROD", "SUPER_ROD",
     }
     local TOOLKIT_EQUIPMENT_ITEMS = {
-      "BICYCLE", "ITEMFINDER", "POKE_FLUTE", "COIN_CASE", "SILPH_SCOPE",
+      "BICYCLE", "TOWN_MAP", "ITEMFINDER", "POKE_FLUTE", "COIN_CASE", "SILPH_SCOPE",
     }
     local TOOLKIT_KEY_ITEMS = {
       "S_S_TICKET", "SECRET_KEY", "CARD_KEY", "LIFT_KEY",
     }
     local CONSOLIDATABLE_KEY_ITEMS = {
-      "BICYCLE", "OLD_ROD", "GOOD_ROD", "SUPER_ROD",
+      "BICYCLE", "TOWN_MAP", "OLD_ROD", "GOOD_ROD", "SUPER_ROD",
       "ITEMFINDER", "POKE_FLUTE", "COIN_CASE", "SILPH_SCOPE",
       "S_S_TICKET", "SECRET_KEY", "CARD_KEY", "LIFT_KEY",
     }
@@ -2155,7 +3544,7 @@ return function(mod)
     for _, id in ipairs(TOOLKIT_KEY_ITEMS) do TOOLKIT_KEY_SET[id] = true end
 
     local KEY_LABEL = {
-      BICYCLE = "BICYCLE", OLD_ROD = "OLD ROD", GOOD_ROD = "GOOD ROD",
+      BICYCLE = "BICYCLE", TOWN_MAP = "TOWN MAP", OLD_ROD = "OLD ROD", GOOD_ROD = "GOOD ROD",
       SUPER_ROD = "SUPER ROD", ITEMFINDER = "ITEMFINDER",
       POKE_FLUTE = "POKe FLUTE", COIN_CASE = "COIN CASE",
       SILPH_SCOPE = "SILPH SCOPE", S_S_TICKET = "S.S.TICKET",
@@ -2171,6 +3560,66 @@ return function(mod)
     end
     local function toolkitStoredItem(g, id)
       return TOOLKIT_FISHING_SET[id] or TOOLKIT_EQUIPMENT_SET[id] or TOOLKIT_KEY_SET[id] or isMachineItem(g, id)
+    end
+
+    -- Portable raw-.sav transfer record -----------------------------------
+    -- Recomp's raw Gen I export intentionally omits save.modData. Older
+    -- Vanilla+ builds can therefore lose Toolkit-owned machines/key items when
+    -- they are squeezed back into the cartridge's 20-slot Bag. The companion
+    -- transfer bridge stores a compact record in unused SRAM bank-1 space
+    -- (0x3524-0x3fff), outside the vanilla main checksum and all allocated
+    -- Red/Blue/Yellow save structures. Restore it here before Toolkit migration.
+    local VP_TRANSFER_START = 0x3524 + 1
+    local VP_TRANSFER_CAPACITY = 0x4000 - 0x3524
+    local VP_TRANSFER_MAGIC = "VPTR1\n"
+
+    local function decodeTransferValue(kind, value)
+      if kind == "b" then return value == "1" end
+      if kind == "n" then return tonumber(value) end
+      return value
+    end
+
+    local function restorePortableTransferRecord(g)
+      if not (g and g.save) then return false end
+      if mod.save:get("portable_transfer_restored_v1") then return false end
+      local raw = g.save.rawImport
+      if type(raw) ~= "string" or #raw < 0x4000 then return false end
+      local region = raw:sub(VP_TRANSFER_START, VP_TRANSFER_START + VP_TRANSFER_CAPACITY - 1)
+      if region:sub(1, #VP_TRANSFER_MAGIC) ~= VP_TRANSFER_MAGIC then return false end
+      local stop = region:find("\nEND\n", 1, true)
+      if not stop then return false end
+      local body = region:sub(1, stop + 4)
+      g.save.inventory = g.save.inventory or {}
+
+      local restoredItems = 0
+      for line in body:gmatch("[^\n]+") do
+        local tag, a, b, c = line:match("^([^|]+)|([^|]*)|?([^|]*)|?(.*)$")
+        if tag == "F" and a and b then
+          local value = decodeTransferValue(b, c or "")
+          -- The bridge only writes Vanilla+ Toolkit/Bill/Oak primitive state.
+          if a == "registered_key_item_v1"
+            or a:match("^toolkit_")
+            or a:match("^tradeback_")
+            or a:match("^oak_") then
+            mod.save:set(a, value)
+          end
+        elseif tag == "I" and a and b then
+          local qty = math.max(0, math.min(99, math.floor(tonumber(b) or 0)))
+          if qty > 0 then
+            g.save.inventory[a] = math.max(tonumber(g.save.inventory[a]) or 0, qty)
+            restoredItems = restoredItems + 1
+          end
+        end
+      end
+
+      -- A previously received Toolkit is a Vanilla+-only item and cannot exist
+      -- in cartridge SRAM by itself, so restore its physical ownership mirror.
+      if mod.save:get("toolkit_received_v1") then
+        g.save.inventory[TOOLKIT_ID] = math.max(1, tonumber(g.save.inventory[TOOLKIT_ID]) or 0)
+      end
+      mod.save:set("portable_transfer_restored_v1", true)
+      mod.save:set("portable_transfer_restored_items_v1", restoredItems)
+      return true
     end
 
 
@@ -2218,6 +3667,68 @@ return function(mod)
       return moved
     end
 
+    -- Permanent save-transfer safety: Mom can unpack Toolkit-managed physical
+    -- items back into vanilla Bag + PC storage before a raw .sav export.
+    -- The operation is transactional and prefers the PC so Gen I's 20-slot Bag
+    -- cannot silently discard overflow during transfer/reinstall workflows.
+    local function vpCopyTable(src)
+      local out = {}
+      for k, v in pairs(src or {}) do out[k] = v end
+      return out
+    end
+
+    local function vpCountPositiveSlots(t)
+      local n = 0
+      for _, qty in pairs(t or {}) do
+        if (tonumber(qty) or 0) > 0 then n = n + 1 end
+      end
+      return n
+    end
+
+    local function packToolkitForTransfer(g)
+      if not (g and g.save) then return false, "Save data isn't ready." end
+      g.save.inventory = g.save.inventory or {}
+      g.save.pcItems = g.save.pcItems or {}
+      local bag, pc = vpCopyTable(g.save.inventory), vpCopyTable(g.save.pcItems)
+      local packed = {}
+      local function collect(id, qty)
+        qty = tonumber(qty) or 0
+        if qty > 0 then packed[id] = math.min(99, (packed[id] or 0) + qty) end
+      end
+      for id, qty in pairs(vpCopyTable(bag)) do
+        if id == TOOLKIT_ID then bag[id] = nil
+        elseif toolkitStoredItem(g, id) then collect(id, qty); bag[id] = nil end
+      end
+      for id, qty in pairs(vpCopyTable(pc)) do
+        if id == TOOLKIT_ID then pc[id] = nil
+        elseif toolkitStoredItem(g, id) then collect(id, qty); pc[id] = nil end
+      end
+      local bagSlots, pcSlots = vpCountPositiveSlots(bag), vpCountPositiveSlots(pc)
+      local BAG_LIMIT, PC_LIMIT = 20, 50
+      local ordered, seen = {}, {}
+      local function push(id)
+        if packed[id] and not seen[id] then ordered[#ordered+1]=id; seen[id]=true end
+      end
+      for _, id in ipairs(CONSOLIDATABLE_KEY_ITEMS) do push(id) end
+      local rest = {}
+      for id in pairs(packed) do if not seen[id] then rest[#rest+1]=id end end
+      table.sort(rest)
+      for _, id in ipairs(rest) do push(id) end
+      for _, id in ipairs(ordered) do
+        local qty = packed[id]
+        if pc[id] then pc[id] = math.min(99, (tonumber(pc[id]) or 0) + qty)
+        elseif pcSlots < PC_LIMIT then pc[id]=qty; pcSlots=pcSlots+1
+        elseif bag[id] then bag[id] = math.min(99, (tonumber(bag[id]) or 0) + qty)
+        elseif bagSlots < BAG_LIMIT then bag[id]=qty; bagSlots=bagSlots+1
+        else return false, "Your BAG and PC don't have enough free item slots." end
+      end
+      g.save.inventory, g.save.pcItems = bag, pc
+      mod.save:set("toolkit_transfer_packed_v1", true)
+      mod.save:set("toolkit_received_v1", false)
+      mod.save:set("registered_key_item_v1", false)
+      for _, id in ipairs(CONSOLIDATABLE_KEY_ITEMS) do mod.save:set(toolkitKeyFlag(id), false) end
+      return true, string.format("Packed %d Toolkit item types into BAG + PC.", #ordered)
+    end
 
     local function withConsolidatedInventoryHidden(g, fn)
       if not (g and g.save and toolkitUnlocked(g)) then
@@ -2241,7 +3752,7 @@ return function(mod)
       if not ow or not ow.player then return end
       local fx, fy = ow.player:facingCell()
       if not ow.map:inBounds(fx, fy) then
-        return show("There's nothing here\nto use the AXE on.")
+        return show(vpFormatDialogue("There's nothing here to use the AXE on."))
       end
       local ts = ow.map.def.tileset
       local tile = ow.map:cellTile(fx, fy)
@@ -2249,7 +3760,7 @@ return function(mod)
       local isTree = (ts == "OVERWORLD" and tile == 0x3d)
         or (ts == "GYM" and tile == 0x50)
       if not (isTree or isGrass) then
-        return show("There's nothing here\nto use the AXE on.")
+        return show(vpFormatDialogue("There's nothing here to use the AXE on."))
       end
       local bx, by = math.floor(fx / 2), math.floor(fy / 2)
       local block = ow.map:blockAt(bx, by)
@@ -2341,8 +3852,13 @@ return function(mod)
     local function useBalloon()
       local ow = gameRef and gameRef.overworld
       if not ow then return end
+      local mapId = ow.map and tostring(ow.map.id or ""):upper() or ""
       local tileset = ow.map and ow.map.def and tostring(ow.map.def.tileset or ""):upper() or ""
-      if tileset ~= "OVERWORLD" then
+      -- Route 23's Indigo Plateau exterior uses a non-OVERWORLD tileset even
+      -- though it is an outdoor Fly-capable area. Explicitly allow that map
+      -- without relaxing the restriction for the Plateau lobby or caves.
+      local plateauExterior = (mapId == "ROUTE_23" or mapId == "INDIGO_PLATEAU")
+      if tileset ~= "OVERWORLD" and not plateauExterior then
         return show("You can't unpack the\nHOT AIR BALLOON here.")
       end
       local ok, TownMap = pcall(require, "src.ui.TownMap")
@@ -2415,6 +3931,13 @@ return function(mod)
           return ow:goFishing(id)
         end
         return show("No good! It's not\neven near water.")
+      end
+
+      if id == "TOWN_MAP" then
+        local ok, TownMap = pcall(require, "src.ui.TownMap")
+        if not ok or not TownMap then return show("The TOWN MAP won't\nopen here.") end
+        gameRef.stack:push(TownMap.new(gameRef, { fly = false }))
+        return
       end
 
       if id == "ITEMFINDER" then
@@ -2561,7 +4084,14 @@ return function(mod)
     end
 
     local function sortMachineRows(rows, mode)
-      table.sort(rows, function(a, b)
+      -- CANCEL is the Bag terminator, not a machine. Recomp 0.2.56 exposes it
+      -- as a real selectable row, so never feed it through the TM sorter.
+      local machines, cancelRows = {}, {}
+      for _, row in ipairs(rows or {}) do
+        if row and row.cancel then cancelRows[#cancelRows + 1] = row
+        else machines[#machines + 1] = row end
+      end
+      table.sort(machines, function(a, b)
         local ma, mb = machineMeta(a.value), machineMeta(b.value)
         if mode == "ALPHA" then
           if ma.move ~= mb.move then return ma.move < mb.move end
@@ -2574,6 +4104,9 @@ return function(mod)
         end
         return ma.id < mb.id
       end)
+      for i = #rows, 1, -1 do rows[i] = nil end
+      for _, row in ipairs(machines) do rows[#rows + 1] = row end
+      for _, row in ipairs(cancelRows) do rows[#rows + 1] = row end
     end
 
     openTMHMBag = function()
@@ -2586,43 +4119,27 @@ return function(mod)
       end
       if not hasMachine then return show("No TMs or HMs are\nin the TM/HM BAG.") end
 
-      -- Reuse Recomp's complete native TM/HM teaching flow. For the lifetime
-      -- of this screen only, hide every non-machine inventory row so its own
-      -- refreshes remain a pure TM/HM list after a teach/consume operation.
-      local inv = g.save.inventory
-      local held = {}
-      for id, qty in pairs(inv) do
-        if not isMachineItem(g, id) then held[id] = qty; inv[id] = nil end
-      end
-      local oldOrder = {}
-      for i, id in ipairs(g.save.bagOrder or {}) do oldOrder[i] = id end
-
+      -- Imported-save safety (test84): never remove real inventory entries just
+      -- to build this screen. Raw .sav imports do not preserve Vanilla+ modData,
+      -- so a UI interruption while inventory was temporarily hidden could make
+      -- legitimate items appear lost. Keep the save authoritative and filter
+      -- only the visible BagMenu rows instead.
       openingToolkitMachineBag = true
       local BagMenu = require("src.ui.BagMenu")
       local list = BagMenu.new(g, {})
       openingToolkitMachineBag = false
 
-      local restored = false
-      local function restoreInventory()
-        if restored then return end
-        restored = true
-        for id, qty in pairs(held) do inv[id] = qty end
-        g.save.bagOrder = oldOrder
-        Bag.order(g.save, g.data) -- prune consumed machines / append anything new
-      end
       vpTMHMBagActive = true
       local previousClose = list.close
       function list:close(...)
         vpTMHMBagActive = false
         vpTMHMSortNow = nil
-        restoreInventory()
         return previousClose(self, ...)
       end
       local previousCancel = list.onCancel
       list.onCancel = function(...)
         vpTMHMBagActive = false
         vpTMHMSortNow = nil
-        restoreInventory()
         if previousCancel then return previousCancel(...) end
       end
 
@@ -2633,33 +4150,54 @@ return function(mod)
         mode = "NUM"
       end
       normalizeMode()
-      local function applySort()
+
+      local function filterAndSortMachineRows()
+        if type(list.items) ~= "table" then return end
         local selected = list.items[list.index] and list.items[list.index].value
-        sortMachineRows(list.items, mode)
+        local filtered = {}
+        local cancelRow = nil
+        for _, row in ipairs(list.items) do
+          local id = row and row.value
+          if row and row.cancel then
+            cancelRow = cancelRow or row
+          elseif id and isMachineItem(g, id) then
+            filtered[#filtered + 1] = row
+          end
+        end
+        if cancelRow then filtered[#filtered + 1] = cancelRow end
+        list.items = filtered
+        sortMachineRows(list.items, mode) -- helper always re-appends CANCEL last
         if selected then
           for i, row in ipairs(list.items) do
             if row.value == selected then list.index = i break end
           end
         end
-        list.index = math.max(1, math.min(list.index, math.max(1, #list.items)))
-        list.title = "TM/HM BAG " .. mode
-        list.footer = "SELECT: SORT"
+        list.index = math.max(1, math.min(list.index or 1, math.max(1, #list.items)))
+        list.title = "TM/HM BAG"
+        -- Six item rows leave the seventh interior line as a dedicated status
+        -- slot. This keeps SELECT: SORT clear of the bottom frame on 0.2.56.
+        list.rows = 6
+        list.footer = "SELECT: SORT " .. mode
       end
+
       local function cycleSortMode()
         local idx = 1
         for i, m in ipairs(modes) do if m == mode then idx = i break end end
         mode = modes[(idx % #modes) + 1]
         mod.save:set("toolkit_tm_sort_v1", mode)
-        applySort()
+        filterAndSortMachineRows()
       end
       list.onSelectKey = function(_, l) cycleSortMode() end
       vpTMHMSortNow = cycleSortMode
       local previousUpdate = list.update
       function list:update(dt)
-        applySort()
-        return previousUpdate(self, dt)
+        local result = previousUpdate(self, dt)
+        -- Native BagMenu may rebuild rows after teaching/using a machine.
+        -- Re-filter after the refresh without ever touching save.inventory.
+        filterAndSortMachineRows()
+        return result
       end
-      applySort()
+      filterAndSortMachineRows()
       g.stack:push(list)
     end
 
@@ -2798,6 +4336,7 @@ return function(mod)
         id = TOOLKIT_ID, name = TOOLKIT_NAME, price = 0,
         keyItem = true, pocket = "KEY_ITEM",
       }
+      restorePortableTransferRecord(g)
       -- Self-heal nonstandard acquisition (cheats, save editors, another mod,
       -- or an older migration): actual Toolkit ownership is enough.
       if toolkitItemOwned(g) and not mod.save:get("toolkit_received_v1") then
@@ -2811,16 +4350,23 @@ return function(mod)
       end
     end)
 
-    -- Restore the full-height Bag presentation used by Vanilla+.
-    -- Newer Gen1Recomp BagMenu constructs kind="bag" with itemBox=true, whose
-    -- renderer is hard-coded to a four-row partial box. Intercept construction
-    -- and request the normal seven-row ListMenu instead. This applies to both
-    -- the ordinary Bag and Vanilla+'s TM/HM Bag.
+    -- Recomp 0.2.56 full-height Bag compatibility -----------------------
+    -- Vanilla+ intentionally presents Bag/TM-HM lists as full pages. The
+    -- current native Bag uses itemBox=true; forcing only itemBox=false drops
+    -- `item.count` because generic ListMenu rows render `right` but not count.
+    -- Keep the full-height presentation, but give kind=bag its own thin renderer
+    -- that honors current row fields, keeps CANCEL selectable, and restores a
+    -- Gen-I frame around the page. PC item lists remain completely native.
     do
       local okListMenu, ListMenu = pcall(require, "src.ui.ListMenu")
-      if okListMenu and ListMenu and not ListMenu._vanillaPlusFullBagWrapped then
-        ListMenu._vanillaPlusFullBagWrapped = true
+      local okFont, Font = pcall(require, "src.render.Font")
+      local okTheme, Theme = pcall(require, "src.ui.Theme")
+      local okStrings, Strings = pcall(require, "src.core.Strings")
+      if okListMenu and okFont and okTheme and okStrings and ListMenu
+        and not ListMenu._vanillaPlusFullBagRecomp0256 then
+        ListMenu._vanillaPlusFullBagRecomp0256 = true
         local previousListNew = ListMenu.new
+        local previousListDraw = ListMenu.draw
         function ListMenu.new(g, title, items, opts)
           if opts and opts.kind == "bag" then
             local copy = {}
@@ -2830,6 +4376,63 @@ return function(mod)
             opts = copy
           end
           return previousListNew(g, title, items, opts)
+        end
+
+        function ListMenu:draw()
+          if self.kind ~= "bag" or self.itemBox then
+            return previousListDraw(self)
+          end
+          love.graphics.setColor(1, 1, 1, 1)
+          love.graphics.rectangle("fill", 0, 0, 160, 144)
+          Font.drawBox(0, 0, 20, 18)
+          love.graphics.setColor(0, 0, 0, 1)
+
+          local title = Strings(self.title or "ITEMS")
+          Font.draw(title, 16, 8)
+          if self.footer then
+            local hint = tostring(self.footer)
+            if tostring(self.title or "") == "TM/HM BAG" then
+              -- Dedicated status slot above the bottom border. TM/HM Bag uses
+              -- six item rows, so y=128 is clear and never touches the frame.
+              Font.draw(hint, 152 - Font.width(hint), 128)
+            else
+              Font.draw(hint, 152 - Font.width(hint), 8)
+            end
+          end
+          if #self.items == 0 then Font.draw(Strings("Nothing here."), 16, 32) end
+
+          local shown, sawCancel = 0, false
+          for row = 1, (self.rows or 7) do
+            local i = (self.scroll or 0) + row
+            local item = self.items[i]
+            if not item then break end
+            shown = shown + 1
+            if item.cancel then sawCancel = true end
+            local y = 8 + row * 16
+            local rhs = nil
+            if item.count ~= nil then rhs = "x" .. tostring(item.count)
+            elseif item.right ~= nil then rhs = tostring(item.right)
+            elseif item.sub ~= nil then rhs = tostring(item.sub) end
+            local budget = 136
+            if rhs then budget = 136 - Font.width(rhs) - 8 end
+            local label = tostring(item.label or "")
+            -- Bag item names are short enough for the current 17-column page,
+            -- but trim defensively if another mod supplies a long custom item.
+            while Font.width(label) > budget and #label > 1 do label = label:sub(1, -2) end
+            Font.draw(label, 16, y)
+            if rhs then Font.draw(rhs, 144 - Font.width(rhs), y) end
+            if i == self.index then
+              Font.drawCode(self.hollowIndex == i and Theme.cursorHollow or Theme.cursor, 8, y)
+            end
+            if self.swapIndex == i and i ~= self.index then
+              Font.drawCode(Theme.cursorHollow, 8, y)
+            end
+          end
+          if shown == (self.rows or 7) and not sawCancel then
+            local moreY = tostring(self.title or "") == "TM/HM BAG" and 112 or 128
+            Font.drawCode(Theme.moreArrow, 144, moreY)
+          end
+          love.graphics.setColor(1, 1, 1, 1)
         end
       end
     end
@@ -2843,9 +4446,48 @@ return function(mod)
         local previousBagNew = BagMenu.new
         function BagMenu.new(g, opts)
           if openingToolkitMachineBag then return previousBagNew(g, opts) end
-          return withConsolidatedInventoryHidden(g, function()
-            return previousBagNew(g, opts)
-          end)
+          -- Imported-save safety: construct the native Bag from the untouched
+          -- inventory and hide Toolkit-managed rows only in the menu model.
+          -- Never delete/restore save.inventory entries as a presentation hack.
+          local list = previousBagNew(g, opts)
+
+          -- BagMenu can rebuild its visible rows from the live inventory after
+          -- actions such as TOSS. Re-filter the already-open Bag after every
+          -- update so Toolkit-managed items never leak back into view.
+          if list and not list._vanillaPlusToolkitLiveFilter then
+            list._vanillaPlusToolkitLiveFilter = true
+
+            local function filterToolkitRows()
+              if not toolkitUnlocked(g) or type(list.items) ~= "table" then return end
+              local filtered = {}
+              for _, row in ipairs(list.items) do
+                local id = row and row.value
+                if not (id and toolkitStoredItem(g, id)) then
+                  filtered[#filtered + 1] = row
+                end
+              end
+              list.items = filtered
+              local count = #filtered
+              if count == 0 then
+                list.index = 1
+              elseif (list.index or 1) > count then
+                list.index = count
+              elseif (list.index or 1) < 1 then
+                list.index = 1
+              end
+            end
+
+            filterToolkitRows()
+
+            local previousUpdate = list.update
+            function list:update(...)
+              local result = previousUpdate(self, ...)
+              filterToolkitRows()
+              return result
+            end
+          end
+
+          return list
         end
       end
       local okPlayerPC, PlayerPC = pcall(require, "src.ui.PlayerPC")
@@ -3070,24 +4712,90 @@ return function(mod)
       local g = gameRef
       if not (g and ow and mom) then return end
       mom:facePlayer(ow.player)
-      show(vpFormatDialogue("MOM: " .. playerName() .. "! There you are. Nurse Joy said you might stop by. You've traveled all over KANTO now, so I put together something useful for your adventures."), function()
+      local packedReturn = mod.save:get("toolkit_transfer_packed_v1") == true
+
+      local function finishGive()
         local added = Bag.add(g.save, TOOLKIT_ID, 1, g.data)
         if not added then
           return show(vpFormatDialogue("MOM: Your BAG is full! Make some room and come talk to me again."))
         end
         mod.save:set("toolkit_received_v1", true)
+        mod.save:set("toolkit_ever_received_v1", true)
+        mod.save:set("toolkit_transfer_packed_v1", false)
         consolidateOwnedKeyItems(g)
         mod.save:set("registered_key_item_v1", TOOLKIT_ID)
-        show(vpFormatDialogue("MOM: I organized your adventure gear while you were away. I even checked your PC and put your key gear into the TOOLKIT. I bought you a few extra things too... and this fancy new thing called a LAPTOP!"), function()
-          show(vpFormatDialogue(playerName() .. " received the ADVENTURER'S TOOLKIT! Press SELECT in the overworld to use it. Hold SELECT to reopen REGISTER."))
+
+        if packedReturn then
+          show(vpFormatDialogue("MOM: There we go! I put your TOOLKIT back together and organized everything again."), function()
+            show(vpFormatDialogue(playerName() .. " received the ADVENTURER'S TOOLKIT! Press SELECT in the overworld to use it. Hold SELECT to reopen REGISTER."))
+          end)
+        else
+          show(vpFormatDialogue("MOM: I organized your adventure gear while you were away. I even checked your PC and put your key gear into the TOOLKIT. I bought you a few extra things too... and this fancy new thing called a LAPTOP!"), function()
+            show(vpFormatDialogue(playerName() .. " received the ADVENTURER'S TOOLKIT! Press SELECT in the overworld to use it. Hold SELECT to reopen REGISTER."))
+          end)
+        end
+      end
+
+      if packedReturn then
+        show(vpFormatDialogue("MOM: Back already? I can put your TOOLKIT together again now that your save is settled. Want me to rebuild it?"), function()
+          local Menu = require("src.ui.Menu")
+          gameRef.stack:push(Menu.new(gameRef, {
+            { label = "YES", onSelect = finishGive },
+            { label = "NO", onSelect = function()
+                show(vpFormatDialogue("MOM: No problem. Your gear will stay packed until you're ready."))
+              end },
+          }, { tx = 12, ty = 7, tw = 8, th = 6 }))
         end)
-      end)
+      else
+        show(vpFormatDialogue("MOM: " .. playerName() .. "! There you are. Nurse Joy said you might stop by. You've traveled all over KANTO now, so I put together something useful for your adventures."), finishGive)
+      end
     end
 
     if not OverworldState._vanillaPlusMomToolkitTalkWrapped then
       OverworldState._vanillaPlusMomToolkitTalkWrapped = true
       local previousTalkTo = OverworldState.talkTo
       function OverworldState:talkTo(npc)
+        if npc and isMomNPC(self, npc) and mod.save:get("toolkit_received_v1") then
+          npc:facePlayer(self.player)
+          local Menu = require("src.ui.Menu")
+          local state = self
+          local momExtraLines = {
+            "MOM: It's nice having you home, even if you never stay put for very long.",
+            "MOM: MR.MIME has certainly made himself comfortable around here. He acts like he owns the place sometimes!",
+            "MOM: PROF.OAK still asks about you. I think he's proud, even when he tries to sound like a professor about it.",
+            "MOM: You've seen more of KANTO than most people ever will. Just remember PALLET TOWN is still home.",
+            "MOM: I keep hearing stories about the CHAMPION. Funny, they never mention how messy your room used to be!",
+            "MOM: Your adventures keep getting stranger. I stopped being surprised a long time ago.",
+          }
+          local function momTalk()
+            if not mod.options:get("oak_postdex_life") then
+              return show(vpFormatDialogue("MOM: It's good to see you, " .. playerName() .. "."))
+            end
+            local last = tonumber(mod.save:get("mom_extra_dialogue_last_v1")) or 0
+            local pick = math.random(#momExtraLines)
+            if #momExtraLines > 1 and pick == last then pick = (pick % #momExtraLines) + 1 end
+            mod.save:set("mom_extra_dialogue_last_v1", pick)
+            show(vpFormatDialogue(momExtraLines[pick]))
+          end
+          show(vpFormatDialogue("MOM: Need anything?"), function()
+            gameRef.stack:push(Menu.new(gameRef, {
+              { label = "TALK", onSelect = momTalk },
+              -- Preserve the native Mom interaction as the explicit HEAL path.
+              { label = "HEAL", onSelect = function() previousTalkTo(state, npc) end },
+              { label = "PACK TOOLKIT", onSelect = function()
+                  local ok, msg = packToolkitForTransfer(gameRef)
+                  if ok then
+                    show(vpFormatDialogue("MOM: All packed! " .. msg .. " SAVE the game before exporting or moving the save. When you're settled, come back and I'll put the TOOLKIT together again."))
+                  else
+                    show(vpFormatDialogue("MOM: I couldn't pack it yet. " .. tostring(msg)))
+                  end
+                end },
+              { label = "CANCEL" },
+            }, { tx = 3, ty = 3, tw = 14, th = 10 }))
+          end)
+          return
+        end
+
         if toolkitChampionReady() and npc then
           local mapId = tostring(self.map and self.map.id or ""):upper()
           if mapId:find("POKECENTER", 1, true)
@@ -3110,9 +4818,25 @@ return function(mod)
       end
     end
 
-    -- Mimey: post-Champion household life. He uses a normal classic sprite
-    -- and WALK behavior so the house visibly changes instead of gaining a
-    -- decorative statue.
+    -- Mimey: post-Champion household life. He roams the whole downstairs
+    -- instead of hovering beside Mom. His timer is intentionally aggressive so
+    -- the player may genuinely have to chase him down to talk.
+    local function randomMimeCell(ow)
+      local Collision = require("src.world.Collision")
+      local w, h = ow.map.widthCells or 0, ow.map.heightCells or 0
+      if w <= 0 or h <= 0 then return nearbyFreeCell(ow, 5, 4) end
+      for _ = 1, 80 do
+        local x = love.math.random(0, math.max(0, w - 1))
+        local y = love.math.random(0, math.max(0, h - 1))
+        if ow.map:inBounds(x, y) and ow.map:isWalkableCell(x, y)
+          and not ow.map:warpAtCell(x, y)
+          and not Collision.occupied(ow.entities, x, y, nil) then
+          return x, y
+        end
+      end
+      return nearbyFreeCell(ow, 5, 4)
+    end
+
     local function maybeSpawnMimey()
       local g, ow = gameRef, gameRef and gameRef.overworld
       if not (g and ow and ow.map and ow.map.id == "REDS_HOUSE_1F") then return end
@@ -3121,13 +4845,25 @@ return function(mod)
         or not (g.save.flags and g.save.flags.EVENT_BEAT_CHAMPION_RIVAL) then return end
       local sprite = g.data.sprites.SPRITE_MONSTER and "SPRITE_MONSTER"
       if not sprite then return end
-      local x, y = nearbyFreeCell(ow, 5, 4)
+      local x, y = randomMimeCell(ow)
       if not x then x, y = nearbyFreeCell(ow, ow.player.cellX, ow.player.cellY) end
       if not x then return end
       local mime = addRuntimeNPC(ow, "vpMimey", sprite, x, y, "WALK")
       if mime then
         mime.species = "MR_MIME"
         mime.enhancedDexId = "MR_MIME"
+        mime.timer = 1
+        local nativeUpdate = mime.update
+        function mime:update(map, entities)
+          local result = nativeUpdate(self, map, entities)
+          -- Native WALK NPCs can idle 30-180 frames and sometimes only turn.
+          -- Mimey is deliberately busier: cap every idle at a few frames so he
+          -- continuously wanders across every reachable part of the house.
+          if not self.moving and not self.frozen then
+            self.timer = math.min(tonumber(self.timer) or 1, love.math.random(3, 10))
+          end
+          return result
+        end
       end
     end
 
@@ -3135,15 +4871,45 @@ return function(mod)
       OverworldState._vanillaPlusMimeTalkWrapped = true
       local previousTalkTo = OverworldState.talkTo
       local mimeLines = {
-        "MR.MIME is carefully\nsweeping the floor.",
-        "MR.MIME wipes down\nthe table with great\nconcentration.",
-        "MR.MIME pauses its\ncleaning.\fMime! Mime!",
-        "MR.MIME straightens\nup the room, then\nlooks very pleased.",
+        "MR.MIME carefully sweeps one corner of the room, then admires his work with a proud little nod.",
+        "MR.MIME wipes down the table with astonishing concentration. He notices you watching and gives a tiny bow.",
+        "MR.MIME pauses and silently presses both palms against an invisible wall. It feels strangely convincing.",
+        "MR.MIME spots you and waves both hands excitedly. Mime! Mime!",
+        "MR.MIME practices an elaborate routine for an audience only he can see. He seems pleased when you applaud.",
+        "MR.MIME points toward the television, shrugs dramatically, and begins acting out what he thinks should happen next.",
+        "MR.MIME studies you for a moment, then perfectly imitates the way you were standing. He looks extremely proud.",
+        "MR.MIME traces a square in the air and taps on an invisible window. Whatever he sees through it surprises him.",
+        "MR.MIME gives you a cheerful salute. He seems genuinely happy whenever you come home.",
+        "MR.MIME pretends to pull on an impossibly heavy rope. After a heroic struggle, he lets go and acts innocent.",
+        "MR.MIME freezes when you look at him, then resumes his routine the instant you turn away.",
+        "MR.MIME marches across the room with exaggerated importance, stops, and bows as though he has reached a stage.",
+        "MR.MIME balances on one foot and slowly feels around for an invisible railing. Apparently the stairs are wherever he says they are.",
+        "MR.MIME pantomimes opening a tiny box, peers inside, and immediately slams the imaginary lid shut.",
+        "MR.MIME notices your POKEMON and gives an enthusiastic round of silent applause.",
+        "MR.MIME taps an invisible barrier twice, listens carefully, and nods as if the wall answered him.",
+        "MR.MIME acts out an entire conversation by himself, switching sides every few seconds. He refuses to explain any of it.",
+        "MR.MIME points at you, points at himself, then draws a huge circle in the air. Whatever that means, he seems delighted.",
       }
+      local mimeDeck, mimeDeckPos = {}, 1
+      local function refillMimeDeck()
+        mimeDeck = {}
+        for i = 1, #mimeLines do mimeDeck[i] = i end
+        for i = #mimeDeck, 2, -1 do
+          local j = love.math.random(i)
+          mimeDeck[i], mimeDeck[j] = mimeDeck[j], mimeDeck[i]
+        end
+        mimeDeckPos = 1
+      end
+      local function nextMimeLine()
+        if #mimeDeck ~= #mimeLines or mimeDeckPos > #mimeDeck then refillMimeDeck() end
+        local idx = mimeDeck[mimeDeckPos]
+        mimeDeckPos = mimeDeckPos + 1
+        return mimeLines[idx]
+      end
       function OverworldState:talkTo(npc)
         if npc and npc.vpMimey then
           npc:facePlayer(self.player)
-          show(mimeLines[love.math.random(#mimeLines)])
+          show(vpFormatDialogue(nextMimeLine()))
           return
         end
         return previousTalkTo(self, npc)
@@ -3248,6 +5014,19 @@ return function(mod)
         if not mod.options:get("battle_exp_bar") then return end
         if not battle or battle.safari or battle.demo or battle.showPlayerBack then return end
         if (battle.introSlide or 0) ~= 0 then return end
+        -- Only draw on the uncovered base battle HUD. The current Recomp
+        -- keeps the battle rendering beneath pushed screens, and its move
+        -- selector is owned by the battle itself (phase="move"). Without
+        -- both guards the EXP strip bleeds into move/type/info pages.
+        local stack = battle.game and battle.game.stack
+        if stack and stack.top and stack:top() ~= battle then return end
+        -- Recomp's battle state can keep drawing beneath move/type overlays
+        -- without changing phase. bottomUIVisible() is the semantic guard
+        -- used by the engine for whether the base battle command HUD owns
+        -- this region; if another battle UI owns it, suppress the EXP strip.
+        -- 0.2.56 names these phases moveSelect/mimicSelect. Suppress our
+        -- custom strip whenever the move/type chooser owns the lower battle UI.
+        if battle.phase == "moveSelect" or battle.phase == "mimicSelect" then return end
         local ratio = expRatio(battle)
         if ratio == nil then return end
         local g = love.graphics
@@ -3420,10 +5199,20 @@ return function(mod)
   end
 
   function VanillaPlusSummary:update(dt)
-    local input = self.game.input
+    -- Mirror Recomp 0.2.56's Summary lifecycle before adding our third page.
+    -- In particular, whiteHold MUST tick down or the native Stats/Moves pages
+    -- remain permanently covered by the transition-white overlay.
+    if self.closing then return end
+    if self.whiteHold and self.whiteHold > 0 then
+      self.whiteHold = self.whiteHold - 1
+      if self.whiteHold == 0 then
+        require("src.core.Sound").playCry(self.game.data, self.mon.species)
+      end
+      return
+    end
 
-    if self.page == 2
-      and mod.options:get("dv_summary")
+    local input = self.game.input
+    if self.page == 2 and mod.options:get("dv_summary")
       and input:wasPressed("select") then
       self.vpHiddenMode = (self.vpHiddenMode == "statExp") and "dvs" or "statExp"
       return
@@ -3433,7 +5222,11 @@ return function(mod)
       if self.page < 3 then
         self.page = self.page + 1
       else
-        self.game.stack:pop()
+        local Transition = require("src.render.Transition")
+        self.closing = true
+        self.game.stack:push(Transition.whiteFlash(self.game, nil, function()
+          self.game.stack:pop()
+        end))
       end
     end
   end
@@ -3579,7 +5372,7 @@ return function(mod)
 
     -- Fossil habitats intentionally cover both walkable cave floor and water.
     -- Seafoam B4F carries the basic fossil lines; Cerulean B1F carries their
-    -- evolved forms plus a 1% AERODACTYL slot.
+    -- evolved forms. QA slots 1-7 total exactly 90% encounter weight.
     local function repairWildFossils()
       if not mod.options:get("wild_fossils") then return end
       local seafoam = {
@@ -3690,6 +5483,34 @@ return function(mod)
       if not ev then return end
       if ev.key == "tm_move_names" then repairMachineNames() end
     end)
+
+    -- Recomp 0.2.56 may rebuild item definitions after game.ready. Reapply
+    -- machine display names at the point of use so the option cannot appear to
+    -- "forget" TM names until the player toggles it off and back on.
+    do
+      local okBagNames, BagMenuNames = pcall(require, "src.ui.BagMenu")
+      if okBagNames and BagMenuNames and not BagMenuNames._vanillaPlusTMNameRefreshWrapped then
+        BagMenuNames._vanillaPlusTMNameRefreshWrapped = true
+        local previousBagNewForNames = BagMenuNames.new
+        function BagMenuNames.new(g, opts)
+          repairMachineNames()
+          local list = previousBagNewForNames(g, opts)
+          if list and type(list.update) == "function" and not list._vanillaPlusTMNameRefreshUpdate then
+            list._vanillaPlusTMNameRefreshUpdate = true
+            local previousUpdateForNames = list.update
+            function list:update(dt, ...)
+              -- 0.2.56 can refresh item definitions/menu rows during UI state
+              -- changes. Repair names immediately before the native update so
+              -- any rebuilt rows inherit the option-selected TM labels.
+              repairMachineNames()
+              return previousUpdateForNames(self, dt, ...)
+            end
+          end
+          return list
+        end
+      end
+    end
+    mod.events:on("map.entered", function() repairMachineNames() end)
 
     -- AREA integration ----------------------------------------------------
     -- QA1 tried to normalize encounter ids with a loose prefix match. That
@@ -3957,8 +5778,686 @@ return function(mod)
         return previousOakTalkTo(self, npc)
       end
     end
+
+
+  -- test56: robust mart TM row renderer -----------------------------------
+  -- Detect the real shop list from its row contents instead of relying on
+  -- constructor option flags, which differ across BUY/SELL paths.  Any item
+  -- list containing a priced TM row is treated as a TM Mart list while the
+  -- TM MARTS option is enabled.  Full TM labels stay in the stock list and
+  -- the selected TM price moves to the footer so label and price can never
+  -- occupy the same horizontal pixels.
+  do
+    local okList56, ListMenu56 = pcall(require, "src.ui.ListMenu")
+    local okFont56, Font56 = pcall(require, "src.render.Font")
+    local okTheme56, Theme56 = pcall(require, "src.ui.Theme")
+    local okStrings56, Strings56 = pcall(require, "src.core.Strings")
+    local okTB56, TextBox56 = pcall(require, "src.render.TextBox")
+    if okList56 and okFont56 and okTheme56 and okStrings56 and okTB56
+      and ListMenu56 and not ListMenu56._vanillaPlusMartRowsTest56 then
+      ListMenu56._vanillaPlusMartRowsTest56 = true
+      local nativeDraw56 = ListMenu56.drawItemBox
+
+      local function isTMRow56(list, item)
+        if not item then return false end
+        local label = tostring(item.label or "")
+        if label:match("^TM%d%d%s") then return true end
+        if item.value and list and list.game and list.game.data and list.game.data.items then
+          local def = list.game.data.items[item.value]
+          return def and def.machine and tostring(item.value):sub(1,2) ~= "HM"
+        end
+        return false
+      end
+
+      local function isMartTMList56(list)
+        if not mod.options:get("tm_marts") or not list or type(list.items) ~= "table" then return false end
+        local hasTM, hasShopRHS = false, false
+        for _,item in ipairs(list.items) do
+          if isTMRow56(list,item) then hasTM = true end
+          if item and (item.price ~= nil or item.sub ~= nil) then hasShopRHS = true end
+        end
+        -- BUY lists expose price/sub fields.  This excludes the TM/HM Bag,
+        -- whose rows contain machines but no shop price column.
+        return hasTM and hasShopRHS
+      end
+
+      function ListMenu56:drawItemBox()
+        -- test60: retire the class-wide test58 renderer. Live ShopMenu BUY/SELL
+        -- lists are handled per-instance below, after construction.
+        return nativeDraw56(self)
+        --[[ test58: clean item-aware TM shop hook.
+        -- Preserve the engine's native ListMenu renderer for EVERYTHING.
+        -- For actual TM rows only, temporarily hide the right-side shop field
+        -- so the full TM## MOVE NAME gets the entire native row. Then restore
+        -- the data and draw that field underneath at half scale, right-aligned.
+        if not (mod.options:get("tm_marts") and self and type(self.items)=="table") then
+          return nativeDraw56(self)
+        end
+
+        local tmVisible={}
+        for row=1,(self.rows or 0) do
+          local i=(self.scroll or 0)+row
+          local item=self.items[i]
+          if item and isTMRow56(self,item) then
+            local rhs=item.price or item.sub or item.right
+            if rhs~=nil then
+              tmVisible[#tmVisible+1]={item=item,row=row,rhs=tostring(rhs),price=item.price,sub=item.sub,right=item.right}
+              item.price=nil; item.sub=nil; item.right=nil
+            end
+          end
+        end
+
+        -- Native renderer handles box geometry, normal items, cursor, scrolling,
+        -- SELL quantities, more-arrow, footer/message box, and all future UI changes.
+        local ok,err=pcall(nativeDraw56,self)
+
+        -- Always restore row data, even if the renderer faults.
+        for _,r in ipairs(tmVisible) do
+          r.item.price=r.price; r.item.sub=r.sub; r.item.right=r.right
+        end
+        if not ok then error(err) end
+
+        -- Draw only the TM secondary value. Physical position is the lower half
+        -- of the 16px row. At 0.5 scale the text keeps natural proportions and
+        -- gives the full-size TM name the whole horizontal lane above it.
+        if #tmVisible>0 then
+          love.graphics.push()
+          love.graphics.scale(0.5,0.5)
+          love.graphics.setColor(0,0,0,1)
+          for _,r in ipairs(tmVisible) do
+            local y=32+(r.row-1)*16+8
+            local w=Font56.width(r.rhs)
+            local x=152-(w*0.5)
+            Font56.draw(r.rhs,x*2,y*2)
+          end
+          love.graphics.pop()
+          love.graphics.setColor(1,1,1,1)
+        end
+        ]]
+      end
+    end
+
+
+  -- test60: per-instance BUY/SELL TM row renderer -------------------------
+  -- ShopMenu's live BUY and SELL lists do not reliably share the same class
+  -- draw path. Tag and wrap the actual ListMenu instance when its semantic
+  -- title is BUY or SELL. Native rendering remains authoritative for every
+  -- normal item. Only true TM rows temporarily suppress their RHS value, then
+  -- redraw it underneath at half scale, right-aligned.
+  do
+    local okList59,ListMenu59=pcall(require,"src.ui.ListMenu")
+    local okFont59,Font59=pcall(require,"src.render.Font")
+    if false and okList59 and okFont59 and ListMenu59 and Font59 and type(ListMenu59.new)=="function"
+      and not ListMenu59._vanillaPlusShopInstanceTMTest60 then
+      ListMenu59._vanillaPlusShopInstanceTMTest60=true
+      local previousNew59=ListMenu59.new
+
+      local function isTMItem59(list,item)
+        if not item then return false end
+        local label=tostring(item.label or "")
+        if label:match("^TM%d%d%s") then return true end
+        local id=item.value
+        local data=list and list.game and list.game.data and list.game.data.items
+        local def=id and data and data[id]
+        return def and def.machine and tostring(id):sub(1,2)~="HM" or false
+      end
+
+      function ListMenu59.new(g,title,items,opts)
+        local list=previousNew59(g,title,items,opts)
+        local shopTitle=tostring(title or ""):upper()
+        if list and (shopTitle=="BUY" or shopTitle=="SELL") and not list._vpTMShopRows59 then
+          list._vpTMShopRows59=true
+          local nativeInstanceDraw=list.drawItemBox
+          if type(nativeInstanceDraw)=="function" then
+            function list:drawItemBox(...)
+              if not mod.options:get("tm_marts") or type(self.items)~="table" then
+                return nativeInstanceDraw(self,...)
+              end
+
+              local visible={}
+              local rows=self.rows or 0
+              local scroll=self.scroll or 0
+              for row=1,rows do
+                local i=scroll+row
+                local item=self.items[i]
+                if item and isTMItem59(self,item) then
+                  -- Different shop paths expose the RHS as sub/price/right.
+                  -- Save every candidate, suppress all of them for native draw,
+                  -- and choose the first populated value for the secondary line.
+                  local rhs=item.sub
+                  if rhs==nil then rhs=item.price end
+                  if rhs==nil then rhs=item.right end
+                  if rhs~=nil then
+                    visible[#visible+1]={
+                      item=item,row=row,rhs=tostring(rhs),
+                      sub=item.sub,price=item.price,right=item.right
+                    }
+                    item.sub=nil; item.price=nil; item.right=nil
+                  end
+                end
+              end
+
+              local ok,res=pcall(nativeInstanceDraw,self,...)
+              for _,r in ipairs(visible) do
+                r.item.sub=r.sub; r.item.price=r.price; r.item.right=r.right
+              end
+              if not ok then error(res) end
+
+              if #visible>0 then
+                love.graphics.push()
+                love.graphics.scale(0.5,0.5)
+                love.graphics.setColor(0,0,0,1)
+                for _,r in ipairs(visible) do
+                  local y=32+(r.row-1)*16+8
+                  local w=Font59.width(r.rhs)
+                  local x=152-(w*0.5)
+                  Font59.draw(r.rhs,x*2,y*2)
+                end
+                love.graphics.pop()
+                love.graphics.setColor(1,1,1,1)
+              end
+              return res
+            end
+          end
+        end
+        return list
+      end
+    end
   end
 
+
+  -- test60: clean item-aware TM shop row renderer -------------------------
+  -- Shop BUY/SELL lists are ordinary ListMenu item-box lists (title=nil,
+  -- dialogue=true, itemBox=true). The native renderer ALREADY draws price /
+  -- quantity on y+8, i.e. the lower half of each 16px row. Preserve that.
+  -- Only real TM rows reclaim the unused left gutter for their full label and
+  -- move their cursor with it. Every non-TM row is drawn at the exact native
+  -- coordinates. No Font hooks and no coordinate-based guessing.
+  do
+    local okList60,ListMenu60=pcall(require,"src.ui.ListMenu")
+    local okFont60,Font60=pcall(require,"src.render.Font")
+    local okTheme60,Theme60=pcall(require,"src.ui.Theme")
+    local okStrings60,Strings60=pcall(require,"src.core.Strings")
+    if false and okList60 and okFont60 and okTheme60 and okStrings60 and ListMenu60 and Font60
+      and type(ListMenu60.drawItemBox)=="function" and not ListMenu60._vanillaPlusTMShopRowsTest60 then
+      ListMenu60._vanillaPlusTMShopRowsTest60=true
+      local nativeDraw60=ListMenu60.drawItemBox
+
+      local function isShopList60(self)
+        -- test64: BUY-only. ShopMenu BUY rows carry item.price; SELL rows
+        -- carry item.right. Require a priced TM row so the Toolkit giant SELL
+        -- bag and every non-shop item list stay on their already-passing path.
+        if not mod.options:get("tm_marts") or not self or not self.dialogue
+          or not self.itemBox or type(self.items)~="table" then return false end
+        for _,item in ipairs(self.items) do
+          if item and item.price~=nil and tostring(item.label or ""):match("^TM%d%d%s") then
+            return true
+          end
+        end
+        return false
+      end
+
+      local function tmInfo60(self,item)
+        if not item or item.cancel then return nil end
+        -- Use the literal row identity the player actually sees. This is both
+        -- robust and narrow: only labels beginning TM## are reformatted.
+        local rawLabel=tostring(item.label or "")
+        local prefix=rawLabel:match("^(TM%d%d)%s+")
+        if not prefix then return nil end
+        return rawLabel
+      end
+
+      function ListMenu60:drawItemBox()
+        if not isShopList60(self) then return nativeDraw60(self) end
+
+        -- Constants copied from the current native ListMenu item-box geometry.
+        local ITEM_BOX={tx=4,ty=2,tw=16,th=11}
+        local ITEM_ROWS=self.rows or 4
+        local ITEM_NAME_X,ITEM_TOP_Y=48,32
+        local ITEM_CURSOR_X=40
+        local ITEM_QTY_X,ITEM_QTY_END=112,136
+        local ITEM_MORE_X,ITEM_MORE_Y=144,88
+
+        love.graphics.setColor(1,1,1,1)
+        Font60.drawBox(ITEM_BOX.tx,ITEM_BOX.ty,ITEM_BOX.tw,ITEM_BOX.th)
+        love.graphics.setColor(0,0,0,1)
+        if #self.items==0 then Font60.draw(Strings60("Nothing here."),ITEM_NAME_X,ITEM_TOP_Y) end
+
+        local shown,sawCancel=0,false
+        for row=1,ITEM_ROWS do
+          local i=(self.scroll or 0)+row
+          local item=self.items[i]
+          if not item then break end
+          shown=shown+1
+          if item.cancel then sawCancel=true end
+          local y=ITEM_TOP_Y+(row-1)*16
+          local tmLabel=tmInfo60(self,item)
+          local nameX=tmLabel and 16 or ITEM_NAME_X
+          local cursorX=tmLabel and 8 or ITEM_CURSOR_X
+          Font60.draw(tmLabel or item.label,nameX,y)
+
+          -- Ordinary rows keep native RHS geometry. TM rows use the same
+          -- lower-half placement at half scale, right-aligned, so the full TM
+          -- name owns the entire top line without a collision.
+          local rhs=item.sub or item.price or item.right
+          if tmLabel and rhs then
+            local text=tostring(rhs)
+            love.graphics.push()
+            love.graphics.scale(0.5,0.5)
+            local rightPx=152
+            local drawX=rightPx*2-Font60.width(text)
+            Font60.draw(text,drawX,(y+8)*2)
+            love.graphics.pop()
+          elseif item.sub then
+            Font60.draw(item.sub,ITEM_QTY_X,y+8)
+          elseif item.price then
+            Font60.draw(item.price,ITEM_QTY_END-Font60.width(item.price),y+8)
+          elseif item.right then
+            local count=item.right:sub(2)
+            Font60.draw(item.right:sub(1,1),ITEM_QTY_X,y+8)
+            Font60.draw(count,ITEM_QTY_END-Font60.width(count),y+8)
+          end
+
+          if i==self.index and (self.cursorBlank or 0)==0 then
+            Font60.drawCode(self.hollowIndex==i and Theme60.cursorHollow or Theme60.cursor,cursorX,y)
+          end
+          if self.swapIndex==i and i~=self.index then
+            Font60.drawCode(Theme60.cursorHollow,cursorX,y)
+          end
+        end
+        if shown==ITEM_ROWS and not sawCancel then Font60.drawCode(Theme60.moreArrow,ITEM_MORE_X,ITEM_MORE_Y) end
+
+        -- BUY dialogue money box (MONEY_BOX 11,0). The class override owns
+        -- the full item-box draw while active, so preserve this explicitly.
+        if self.dialogue and self.money then
+          Font60.drawBox(11,0,9,3)
+          love.graphics.setColor(0,0,0,1)
+          local money=("¥%d"):format(self.money() or 0)
+          Font60.draw(money,152-Font60.width(money),8)
+        end
+
+        -- Preserve native shop footer/message box.
+        if self.messageBox or self.footer then
+          Font60.drawBox(0,12,20,6)
+          love.graphics.setColor(0,0,0,1)
+          if self.footer then
+            local flat={}
+            local TextBox60=require("src.render.TextBox")
+            for _,page in ipairs(TextBox60.paginate(self.footer)) do
+              for _,line in ipairs(page) do flat[#flat+1]=line end
+            end
+            local yy=112
+            for j=math.max(1,#flat-1),#flat do Font60.draw(flat[j],8,yy); yy=yy+16 end
+          end
+        end
+        love.graphics.setColor(1,1,1,1)
+      end
+    end
+  end
+
+
+  -- test57: final TM mart row composition shim ----------------------------
+  -- Previous attempts patched ListMenu, but the live shop path can render
+  -- through a different instance.  This hooks the shared font layer only for
+  -- mart rows: TM labels reclaim the unused left margin and their prices move
+  -- to the second half of the 16px row.  Ordinary item rows are untouched.
+  do
+    local okFont57,Font57=pcall(require,"src.render.Font")
+    if okFont57 and Font57 and type(Font57.draw)=="function" and not Font57._vanillaPlusTMMartRowsTest57 then
+      Font57._vanillaPlusTMMartRowsTest57=true
+      local nativeDraw57=Font57.draw
+      local nativeCode57=Font57.drawCode
+      local tmRowY57={}
+      local pendingY57=nil
+      local martMaps57={
+        PEWTER_MART=true,CERULEAN_MART=true,VERMILION_MART=true,LAVENDER_MART=true,
+        FUCHSIA_MART=true,SAFFRON_MART=true,CINNABAR_MART=true,VIRIDIAN_MART=true,
+        INDIGO_PLATEAU_LOBBY=true,CELADON_MART_2F=true,CELADON_MART_5F=true,
+      }
+      local function inTMMart57()
+        return false -- test58: retired coordinate/glyph hook; it corrupted scrolling shop rows
+        --[[ if not mod.options:get("tm_marts") then return false end
+        local ow=gameRef and gameRef.overworld
+        local id=ow and ow.map and ow.map.id
+        return martMaps57[id] and true or false ]]
+      end
+      function Font57.draw(text,x,y,...)
+        local t=tostring(text or "")
+        if inTMMart57() and type(y)=="number" and y>=24 and y<=104 then
+          if t:match("^TM%d%d%s") then
+            pendingY57=y
+            tmRowY57[y]=true
+            -- The stock list normally wastes a large left gutter.  Reclaim it
+            -- for TM move names so even EARTHQUAKE/SKY ATTACK fit naturally.
+            return nativeDraw57(text,16,y,...)
+          elseif pendingY57 and y==pendingY57 and type(x)=="number" and x>=96 then
+            -- This is the inline price drawn immediately after the TM label.
+            -- Put it on the lower half of the same 16px row instead of on top
+            -- of the move name.
+            pendingY57=nil
+            return nativeDraw57(text,x,y+8,...)
+          end
+        end
+        if pendingY57 and y~=pendingY57 then pendingY57=nil end
+        return nativeDraw57(text,x,y,...)
+      end
+      if type(nativeCode57)=="function" then
+        function Font57.drawCode(code,x,y,...)
+          if inTMMart57() and tmRowY57[y] and type(x)=="number" and x>=32 and x<=48 then
+            return nativeCode57(code,8,y,...)
+          end
+          return nativeCode57(code,x,y,...)
+        end
+      end
+    end
+
+
+  -- test63: live item-aware TM shop font bridge ----------------------------
+  -- The engine's current Pokemart path builds a ListMenu item box, but runtime
+  -- method replacement has proven unreliable across builds. Hook the final font
+  -- calls instead, while deriving EVERY decision from the actual top ListMenu
+  -- and the actual visible row item. Unlike test57, there are no remembered row
+  -- coordinates: scrolling cannot make a normal item inherit TM formatting.
+  do
+    local okFont63,Font63=pcall(require,"src.render.Font")
+    local okTheme63,Theme63=pcall(require,"src.ui.Theme")
+    if okFont63 and okTheme63 and Font63 and Theme63 and type(Font63.draw)=="function"
+      and not Font63._vanillaPlusLiveTMShopTest63 then
+      Font63._vanillaPlusLiveTMShopTest63=true
+      local nativeDraw63=Font63.draw
+      local nativeCode63=Font63.drawCode
+
+      local ITEM_TOP_Y63=32
+      local ITEM_STEP63=16
+      local ITEM_CURSOR_X63=40
+      local ITEM_QTY_X63=112
+      local SECONDARY_RIGHT63=152
+
+      local function liveShop63()
+        return nil -- test64: retired; BUY handled by item-aware ListMenu renderer
+        --[[ if not mod.options:get("tm_marts") then return nil end
+        local stack=gameRef and gameRef.stack
+        local top=stack and stack.top and stack:top() or nil
+        -- ShopMenu.buy/sell construct dialogue item-box ListMenus. BUY always
+        -- supplies money; SELL does too in current Gen1Recomp. Requiring it keeps
+        -- Bag/PC item lists completely outside this shim.
+        if top and top.dialogue and top.itemBox and top.money and type(top.items)=="table" then
+          return top
+        end
+        return nil
+        ]]
+      end
+
+      local function rowItem63(list,topY)
+        if not list or type(topY)~="number" then return nil end
+        local rel=topY-ITEM_TOP_Y63
+        if rel<0 or rel%ITEM_STEP63~=0 then return nil end
+        local row=rel/ITEM_STEP63+1
+        if row<1 or row>(list.rows or 4) then return nil end
+        return list.items[(list.scroll or 0)+row],row
+      end
+
+      local function isTM63(item)
+        if not item or item.cancel then return false end
+        return tostring(item.label or ""):match("^TM%d%d%s") ~= nil
+      end
+
+      local function drawSecondary63(item,y)
+        local rhs=item and (item.price or item.sub or item.right)
+        if rhs==nil then return end
+        rhs=tostring(rhs)
+        love.graphics.push()
+        love.graphics.scale(0.5,0.5)
+        local xx=SECONDARY_RIGHT63*2-Font63.width(rhs)
+        nativeDraw63(rhs,xx,y*2)
+        love.graphics.pop()
+      end
+
+      function Font63.draw(text,x,y,...)
+        local list=liveShop63()
+        if list then
+          local t=tostring(text or "")
+          -- Top half: only the literal TM label is moved left to reclaim the
+          -- unused gutter. Full move name stays normal size.
+          local item=rowItem63(list,y)
+          if item and isTM63(item) and t:match("^TM%d%d%s") then
+            return nativeDraw63(text,16,y,...)
+          end
+
+          -- Lower half: map y-8 back to the ACTUAL visible row. This cannot leak
+          -- to another item when scrolling because the item is recomputed now.
+          local lowerItem=rowItem63(list,(type(y)=="number") and (y-8) or -999)
+          if lowerItem and isTM63(lowerItem) then
+            if lowerItem.right then
+              -- Native SELL renders × and count in two calls. Suppress the first
+              -- call and use the second to draw the complete quantity once.
+              if x==ITEM_QTY_X63 then return end
+              drawSecondary63(lowerItem,y)
+              return
+            elseif lowerItem.price or lowerItem.sub then
+              drawSecondary63(lowerItem,y)
+              return
+            end
+          end
+        end
+        return nativeDraw63(text,x,y,...)
+      end
+
+      if type(nativeCode63)=="function" then
+        function Font63.drawCode(code,x,y,...)
+          local list=liveShop63()
+          if list and x==ITEM_CURSOR_X63 then
+            local item=rowItem63(list,y)
+            if item and isTM63(item) then
+              return nativeCode63(code,8,y,...)
+            end
+          end
+          return nativeCode63(code,x,y,...)
+        end
+      end
+    end
+  end
+  end
+  end
+  end
+
+  end
+
+
+  -- test65: patch the ACTUAL live BUY ListMenu instance -------------------
+  do
+    local okShop65, ShopMenu65 = pcall(require, "src.ui.ShopMenu")
+    local okFont65, Font65 = pcall(require, "src.render.Font")
+    local okTheme65, Theme65 = pcall(require, "src.ui.Theme")
+    local okStrings65, Strings65 = pcall(require, "src.core.Strings")
+    if false and okShop65 and okFont65 and okTheme65 and okStrings65
+      and ShopMenu65 and Font65 and Theme65 and Strings65
+      and type(ShopMenu65.new) == "function"
+      and not ShopMenu65._vanillaPlusLiveBuyInstanceTest65 then
+
+      ShopMenu65._vanillaPlusLiveBuyInstanceTest65 = true
+      local previousShopNew65 = ShopMenu65.new
+
+      local function isTM65(item)
+        return item and not item.cancel
+          and tostring(item.label or ""):match("^TM%d%d%s") ~= nil
+      end
+
+      local function installBuyRenderer65(list)
+        if not list or list._vpBuyRenderer65 or type(list.items) ~= "table" then return end
+        list._vpBuyRenderer65 = true
+
+        function list:drawItemBox()
+          local ITEM_BOX={tx=4,ty=2,tw=16,th=11}
+          local ITEM_NAME_X,ITEM_TOP_Y=48,32
+          local ITEM_CURSOR_X=40
+          local ITEM_QTY_END=136
+          local ITEM_MORE_X,ITEM_MORE_Y=144,88
+
+          love.graphics.setColor(1,1,1,1)
+          Font65.drawBox(ITEM_BOX.tx,ITEM_BOX.ty,ITEM_BOX.tw,ITEM_BOX.th)
+          love.graphics.setColor(0,0,0,1)
+          if #self.items==0 then Font65.draw(Strings65("Nothing here."),ITEM_NAME_X,ITEM_TOP_Y) end
+
+          local shown,sawCancel=0,false
+          for row=1,(self.rows or 4) do
+            local i=(self.scroll or 0)+row
+            local item=self.items[i]
+            if not item then break end
+            shown=shown+1
+            if item.cancel then sawCancel=true end
+            local y=ITEM_TOP_Y+(row-1)*16
+            local tm=isTM65(item)
+
+            Font65.draw(item.label, tm and 16 or ITEM_NAME_X, y)
+
+            if tm and item.price then
+              local rhs=tostring(item.price)
+              love.graphics.push()
+              love.graphics.scale(0.5,0.5)
+              Font65.draw(rhs, 152*2-Font65.width(rhs), (y+8)*2)
+              love.graphics.pop()
+            elseif item.sub then
+              Font65.draw(item.sub,112,y+8)
+            elseif item.price then
+              Font65.draw(item.price,ITEM_QTY_END-Font65.width(item.price),y+8)
+            elseif item.right then
+              local count=item.right:sub(2)
+              Font65.draw(item.right:sub(1,1),112,y+8)
+              Font65.draw(count,ITEM_QTY_END-Font65.width(count),y+8)
+            end
+
+            if i==self.index and (self.cursorBlank or 0)==0 then
+              Font65.drawCode(self.hollowIndex==i and Theme65.cursorHollow or Theme65.cursor,
+                              tm and 8 or ITEM_CURSOR_X,y)
+            end
+            if self.swapIndex==i and i~=self.index then
+              Font65.drawCode(Theme65.cursorHollow,tm and 8 or ITEM_CURSOR_X,y)
+            end
+          end
+          if shown==(self.rows or 4) and not sawCancel then
+            Font65.drawCode(Theme65.moreArrow,ITEM_MORE_X,ITEM_MORE_Y)
+          end
+          love.graphics.setColor(1,1,1,1)
+        end
+      end
+
+      function ShopMenu65.new(game, stock, onQuit)
+        local menu=previousShopNew65(game,stock,onQuit)
+        if menu and type(menu.items)=="table" and menu.items[1]
+          and type(menu.items[1].onSelect)=="function" then
+          local nativeBuy65=menu.items[1].onSelect
+          menu.items[1].onSelect=function(...)
+            local result=nativeBuy65(...)
+            local top=game and game.stack and game.stack.top and game.stack:top() or nil
+            if top and top.itemBox and top.dialogue and type(top.items)=="table" then
+              installBuyRenderer65(top)
+            end
+            return result
+          end
+        end
+        return menu
+      end
+    end
+  end
+
+
+  -- test73: current-Recomp native BUY row baseline -------------------------
+  -- The Recomp shop UI changed geometry. Older test60/test65 ListMenu/ShopMenu
+  -- overrides were still forcing the pre-update fixed 160x144 coordinates, which
+  -- caused TM labels/cursors to overlap the BUY/SELL/QUIT panel and mangled the
+  -- lower price line. Those legacy BUY renderers are disabled above. Current
+  -- Recomp now owns item-box geometry, cursor placement, scrolling, and price
+  -- placement for every row, including TMs. Inventory data is unchanged.
+
+  -- test74: widen the current-Recomp Pokemart item box ----------------------
+  -- Current Recomp already gives mart items a clean two-line name/price row,
+  -- but Gen I's native 4,2 -> 19,12 item box leaves only 13 glyph columns after
+  -- the cursor indent. Full `TM## MOVE NAME` labels need 15 columns. For shop
+  -- item-boxes only (BUY and SELL), widen the box two tiles to the left and move
+  -- the cursor/name with it. Price/sub geometry, scrolling and the bottom clerk
+  -- message remain native-sized. This gives 15 full glyph columns without
+  -- shrinking or truncating TM names.
+  do
+    local okList74, ListMenu74 = pcall(require, "src.ui.ListMenu")
+    local okFont74, Font74 = pcall(require, "src.render.Font")
+    local okTheme74, Theme74 = pcall(require, "src.ui.Theme")
+    local okStrings74, Strings74 = pcall(require, "src.core.Strings")
+    local okText74, TextBox74 = pcall(require, "src.render.TextBox")
+    if okList74 and okFont74 and okTheme74 and okStrings74 and okText74
+      and ListMenu74 and Font74 and Theme74 and Strings74 and TextBox74
+      and type(ListMenu74.drawItemBox) == "function"
+      and not ListMenu74._vanillaPlusWideMartBoxTest74 then
+      ListMenu74._vanillaPlusWideMartBoxTest74 = true
+      local nativeItemBox74 = ListMenu74.drawItemBox
+
+      local function drawShopMessage74(self)
+        Font74.drawBox(0, 12, 20, 6)
+        love.graphics.setColor(0, 0, 0, 1)
+        if not self.footer then return end
+        local flat = {}
+        for _, page in ipairs(TextBox74.paginate(self.footer)) do
+          for _, line in ipairs(page) do flat[#flat + 1] = line end
+        end
+        local y = 112
+        for i = math.max(1, #flat - 1), #flat do
+          Font74.draw(flat[i], 8, y)
+          y = y + 16
+        end
+      end
+
+      function ListMenu74:drawItemBox()
+        -- Only Pokemart BUY/SELL lists have both itemBox + dialogue. Bag/PC and
+        -- every other ListMenu keep the exact current-Recomp renderer.
+        if not (self.itemBox and self.dialogue) then
+          return nativeItemBox74(self)
+        end
+
+        local BOX_TX, BOX_TY, BOX_TW, BOX_TH = 2, 2, 18, 11
+        local NAME_X, TOP_Y = 32, 32
+        local CURSOR_X = 24
+        local QTY_X, QTY_END = 112, 136
+        local MORE_X, MORE_Y = 144, 88
+
+        love.graphics.setColor(1, 1, 1, 1)
+        Font74.drawBox(BOX_TX, BOX_TY, BOX_TW, BOX_TH)
+        love.graphics.setColor(0, 0, 0, 1)
+        if #self.items == 0 then
+          Font74.draw(Strings74("Nothing here."), NAME_X, TOP_Y)
+        end
+
+        local shown, sawCancel = 0, false
+        for row = 1, self.rows do
+          local i = self.scroll + row
+          local item = self.items[i]
+          if not item then break end
+          shown = shown + 1
+          if item.cancel then sawCancel = true end
+          local y = TOP_Y + (row - 1) * 16
+          Font74.draw(item.label, NAME_X, y)
+          if item.sub then
+            Font74.draw(item.sub, QTY_X, y + 8)
+          elseif item.price then
+            Font74.draw(item.price, QTY_END - Font74.width(item.price), y + 8)
+          elseif item.right then
+            local count = item.right:sub(2)
+            Font74.draw(item.right:sub(1, 1), QTY_X, y + 8)
+            Font74.draw(count, QTY_END - Font74.width(count), y + 8)
+          end
+          if i == self.index and (self.cursorBlank or 0) == 0 then
+            Font74.drawCode(self.hollowIndex == i and Theme74.cursorHollow or Theme74.cursor, CURSOR_X, y)
+          end
+          if self.swapIndex == i and i ~= self.index then
+            Font74.drawCode(Theme74.cursorHollow, CURSOR_X, y)
+          end
+        end
+        if shown == self.rows and not sawCancel then
+          Font74.drawCode(Theme74.moreArrow, MORE_X, MORE_Y)
+        end
+        if self.messageBox or self.footer then drawShopMessage74(self) end
+        love.graphics.setColor(1, 1, 1, 1)
+      end
+    end
   end
 
 end

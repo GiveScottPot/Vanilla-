@@ -1,30 +1,25 @@
-# Vanilla+ Beta v1.2.1 Hotfix
+# Vanilla+ v1.2.2
 
-Beta v1.2.1 is a compatibility and UI hotfix for Beta v1.2.0.
+Compatibility hotfix for current Gen1Recomp++ builds.
 
-## Fixed
+## Highlights
 
-- Reworked Vanilla+'s **SELECT/Register input handling** to use Gen1Recomp++'s fixed-step input pathway.
-- **Wilds of Kanto 2.1.9:** Vanilla+'s SELECT-based Toolkit and registered shortcuts are now confirmed working alongside Wilds in current testing.
-- Restored the intended **full-height Bag and TM/HM Bag list boxes** after the v1.2.0 UI regression compressed them to a short list.
-- Added **Toolkit ownership self-healing**. Players who already possess the Toolkit through a nonstandard acquisition path can have the required Vanilla+ Toolkit state initialized automatically instead of depending solely on the original Mom handoff event.
+- Updated Vanilla+ for Gen1Recomp++ 0.2.56+ menu/UI lifecycle changes.
+- Repaired Summary / Hidden Stats flow and battle EXP-bar containment.
+- Restored normal Bag quantities and stabilized TM/HM Bag presentation.
+- Improved TM move-name refresh behavior on current Recomp.
+- Preserved Bill's Trade Evolution machine and current custom-dialogue wrapping.
+- Added Mom's TALK / HEAL / PACK TOOLKIT / CANCEL flow.
+- Added a real YES / NO choice when rebuilding a packed Toolkit.
+- Added repeat-acquisition Toolkit dialogue rather than replaying the original first-time handoff.
+- Restored Pokémon Center Chansey support for the Indigo Plateau lobby.
+- Improved household NPC behavior/dialogue support, including Mr. Mime wandering.
+- Preserved current post-Champion mart and Toolkit behavior.
 
-## Retained from v1.2.0
+## Save transfers
 
-- Expanded Adventurer's Toolkit
-- Field Tools, Laptop, Fishing, TM/HM Bag, Equipment, Keys & Tickets, and Register
-- TM/HM Bag sorting by number, move name, or attack type
-- TM/HM Bag registration for direct SELECT access
-- Toggleable Reusable TMs
-- Existing-save Toolkit migration
+Before exporting/transferring a raw `.sav`, reinstalling Recomp, or moving platforms, talk to Mom and use **PACK TOOLKIT**. Raw `.sav` files do not contain Vanilla+ modData.
 
-## Testing note
+## Known compatibility issue
 
-The new SELECT architecture is confirmed working on the primary iOS test setup alongside Wilds of Kanto 2.1.9. Additional Windows, Android, Linux, macOS, and controller testing remains valuable.
-
-## Notes
-
-- No ROM is included.
-- Back up your save before updating.
-- Existing saves are supported where practical.
-- Vanilla+ remains a beta.
+With Wilds of Kanto enabled on the current tested stack, Vanilla+ WILD FOSSILS are suppressed from both Wilds overworld spawning and ordinary random encounters. Fossils work normally with Wilds disabled.
