@@ -1,76 +1,44 @@
 # Vanilla+ Compatibility
 
-Vanilla+ Beta v1.2.1 is developed for Gen1Recomp++ and supports Pokémon Red, Blue, and Yellow.
+Vanilla+ Beta v1.2.2 targets Gen1Recomp++ 0.2.56+ and supports Pokémon Red, Blue, and Yellow.
 
-Compatibility can vary by platform, Gen1Recomp++ version, load order, and other enabled mods. Entries below distinguish confirmed current testing from older known-good combinations.
+Compatibility can vary by platform, exact Gen1Recomp++ version, load order, and other enabled mods. Test Vanilla+ by itself first when diagnosing a problem.
 
-## Current Tested / Known Compatibility
+## Current Recomp baseline
 
-### Wilds of Kanto 2.1.9
-**Status: Confirmed working in current iOS testing**
+Vanilla+ v1.2.2 includes compatibility repairs for the menu, summary, text-box, party, bag, battle HUD/state, and related lifecycle changes introduced in recent Gen1Recomp++ builds.
 
-Beta v1.2.1 replaces Vanilla+'s previous SELECT/Register handling with a fixed-step input implementation. Vanilla+'s SELECT-based Toolkit/Register shortcuts are confirmed working alongside Wilds of Kanto 2.1.9 on the primary iOS test setup.
+## Wilds of Kanto
 
-This resolves the SELECT conflict documented for Beta v1.2.0 on that tested setup. Additional platform testing is still welcome.
+**Status: Partial compatibility on the current Recomp baseline**
 
-### Dramaless Shape Voxel 2.0.2
-**Status: Tested working**
+Vanilla+ and Wilds can run together for many features, including the fixed-step SELECT/Register behavior previously tested with Wilds. However, current QA confirms a specific encounter conflict:
 
-Dramaless Shape Voxel 2.0.2 has been tested alongside Vanilla+ without the earlier SELECT conflict.
+- With Wilds disabled, Vanilla+ WILD FOSSILS spawn normally.
+- With Wilds enabled, Vanilla+ injected fossil species do not appear as Wilds overworld spawns.
+- With Wilds enabled, those injected fossils also do not appear through ordinary random encounters.
 
-### Dramatic Shape Voxel 1.9.0
-**Status: Tested compatible in a known-good stack**
+Until this is resolved, disable Wilds when using Vanilla+ WILD FOSSILS. This is tracked as a compatibility issue rather than a failure of Vanilla+'s fossil encounter table itself.
 
-Dramatic Shape Voxel 1.9.0 has previously worked alongside Vanilla+.
+## Voxel / presentation mods
 
-### Potato Voxel
-**Status: Previously tested compatible**
+DRAMALESS SHAPE, Dramatic Shape Voxel, and Potato Voxel have worked in prior known-good Vanilla+ stacks. Use only one voxel renderer at a time unless the mod authors explicitly support stacking them.
 
-Potato Voxel has worked alongside Vanilla+ in prior testing. Version 1.8.3 is the current file available for compatibility retesting; do not treat that specific version as confirmed until it has been exercised with this hotfix.
+Anime Realism has also worked in prior stacks, but dialogue/render injection mods are higher-risk compatibility targets when Recomp internals change.
 
-### Anime Realism
-**Status: Previously tested compatible**
+## Save transfer / Toolkit
 
-Anime Realism has worked alongside Vanilla+ in prior testing. Version 4.0.2 is available for current compatibility retesting; do not treat that specific version as confirmed until it has been exercised with this hotfix.
+Raw 32 KB Gen I `.sav` exports do not carry Recomp/Vanilla+ modData. Before exporting/transferring a save, deleting or reinstalling Recomp, or moving platforms, talk to Mom and use **PACK TOOLKIT**.
 
-## Game / Platform Testing
+Packing returns Toolkit-managed physical items to vanilla PC + Bag storage where possible. After import/reinstall, Mom can rebuild the Toolkit.
 
-### Pokémon Red
-**Status: Primary QA baseline**
+## Game testing
 
-Red remains the primary Vanilla+ development and regression-testing baseline.
+- **Pokémon Red:** primary development/regression baseline.
+- **Pokémon Blue:** supported; full start-to-finish regression testing is still useful.
+- **Pokémon Yellow:** supported; full start-to-finish regression testing is still useful.
 
-### Pokémon Yellow
-**Status: Working in confirmed prior testing**
-
-Independent Windows testing has confirmed Vanilla+ functioning with Pokémon Yellow. Continue reporting exact platform, Gen1Recomp++ version, and mod stack when testing.
-
-### Pokémon Blue
-**Status: Supported**
-
-Vanilla+ is designed to support Blue alongside Red and Yellow. Additional Blue-specific regression testing remains welcome.
-
-## Beta v1.2.1 SELECT Hotfix
-
-Vanilla+ uses SELECT for:
-- Adventurer's Toolkit quick access
-- Registered Toolkit-compatible shortcuts
-- Direct registered TM/HM Bag access
-- TM/HM Bag sorting
-
-Beta v1.2.1 moves this handling to Gen1Recomp++'s fixed-step input queue rather than relying on the older SELECT interception approach.
-
-Wilds of Kanto 2.1.9 is confirmed working with this new implementation on the primary iOS test setup.
-
-Cross-platform verification remains important, particularly on Windows, Android, Linux, macOS, handheld ports, and controller configurations.
-
-## Toolkit Acquisition / Migration
-
-Toolkit functionality no longer depends solely on the original acquisition event having run. If Vanilla+ detects that the player already owns the Toolkit, it can initialize the required Toolkit state automatically.
-
-This makes the system more resilient to existing saves, migrations, cheats/save editors, and compatible external acquisition methods.
-
-## Reporting Compatibility Problems
+## Reporting compatibility problems
 
 Please include:
 - Game: Red, Blue, or Yellow
@@ -78,13 +46,8 @@ Please include:
 - Exact Gen1Recomp++ version
 - Vanilla+ version
 - Other enabled mods and exact versions
-- Input method when relevant: touchscreen, keyboard, or controller
 - Whether the issue occurs with Vanilla+ by itself
 - Reproduction steps
 - Screenshot or video when possible
 
 Back up important saves before changing Gen1Recomp++ versions or significantly changing your mod stack.
-
-## Help Wanted
-
-Compatibility testing is especially useful for Pokémon Blue/Yellow, Windows, Android, Linux, macOS, handheld ports, controller configurations, Wilds combinations, battle-overhaul mods, and voxel/rendering combinations.
