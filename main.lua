@@ -1,4 +1,4 @@
--- Vanilla+ v1.2.2 compatibility hotfix for Gen1Recomp++ 0.2.56+
+-- Vanilla+ v1.2.3 compatibility hotfix for Gen1Recomp++ 0.2.56+
 -- Native-style hidden-stat page for Pokémon summaries.
 -- A/B: Stats -> Hidden Stats -> Moves -> close
 -- SELECT on Hidden Stats: DVs <-> Stat Exp
@@ -216,7 +216,7 @@ return function(mod)
   end
 
 
-  -- Experimental encounter preview.
+  -- Red/Blue counterpart encounter support.
   --
   -- For the four closely mirrored Red/Blue exclusive families, if an encounter
   -- table contains at least two slots of one counterpart and none of the other,
@@ -729,7 +729,7 @@ return function(mod)
       TextBox._vanillaPlusRoute8LassPreTest20 = true
     end
 
-    -- Progressive Leveling prototype (test31) -------------------------------
+    -- Route 8 Lass dynamic post-Champion scaling -----------------------------
     -- The exact Route 8 Lass is our guinea pig for the global post-Champion
     -- trainer architecture:
     --   highest player level 55-60 -> 3 mons
@@ -1245,152 +1245,7 @@ return function(mod)
     end
   end
 
-  -- Selective visible-pickup modernization (test48) -----------------------
-  do
-    local TextBox=require("src.render.TextBox")
-    local Bag=require("src.inventory.Bag")
-    local okOW,OverworldState=pcall(require,"src.world.OverworldController")
-    local pickup48={
-      VIRIDIAN_FOREST={VIRIDIANFOREST_POKE_BALL={id="POKE_BALL",qty=5}},
-      MT_MOON_1F={
-        MTMOON1F_POTION1={id="POTION",qty=3},
-        MTMOON1F_ESCAPE_ROPE={id="ESCAPE_ROPE",qty=2},
-      },
-      SS_ANNE_2F_ROOMS={
-        SSANNE2FROOMS_MAX_ETHER={id="MAX_ETHER",qty=2},
-      },
-      ROCKET_HIDEOUT_B1F={
-        ROCKETHIDEOUTB1F_ESCAPE_ROPE={id="REVIVE",qty=2},
-        ROCKETHIDEOUTB1F_HYPER_POTION={id="HYPER_POTION",qty=2},
-      },
-      ROCKET_HIDEOUT_B2F={ROCKETHIDEOUTB2F_SUPER_POTION={id="NUGGET",qty=1}},
-      WARDENS_HOUSE={WARDENSHOUSE_RARE_CANDY={id="RARE_CANDY",qty=2}},
-      POKEMON_TOWER_3F={POKEMONTOWER3F_ESCAPE_ROPE={id="FULL_HEAL",qty=2}},
-      POKEMON_TOWER_4F={
-        POKEMONTOWER4F_ELIXER={id="ELIXER",qty=2},
-        POKEMONTOWER4F_AWAKENING={id="AWAKENING",qty=3},
-        POKEMONTOWER4F_HP_UP={id="HP_UP",qty=2},
-      },
-      POKEMON_TOWER_5F={POKEMONTOWER5F_NUGGET={id="NUGGET",qty=2}},
-      POKEMON_TOWER_6F={POKEMONTOWER6F_RARE_CANDY={id="RARE_CANDY",qty=2}},
-      SILPH_CO_3F={SILPHCO3F_HYPER_POTION={id="HYPER_POTION",qty=3}},
-      SILPH_CO_4F={
-        SILPHCO4F_FULL_HEAL={id="FULL_HEAL",qty=3},
-        SILPHCO4F_MAX_REVIVE={id="MAX_REVIVE",qty=2},
-      },
-      SILPH_CO_6F={SILPHCO6F_HP_UP={id="HP_UP",qty=2}},
-      SAFARI_ZONE_EAST={
-        SAFARIZONEEAST_FULL_RESTORE={id="FULL_RESTORE",qty=2},
-      },
-      SAFARI_ZONE_WEST={SAFARIZONEWEST_MAX_POTION={id="MAX_POTION",qty=2}},
-      POKEMON_MANSION_1F={POKEMONMANSION1F_ESCAPE_ROPE={id="HYPER_POTION",qty=2}},
-      POKEMON_MANSION_3F={POKEMONMANSION3F_MAX_POTION={id="MAX_POTION",qty=2}},
-      POKEMON_MANSION_B1F={POKEMONMANSIONB1F_FULL_RESTORE={id="FULL_RESTORE",qty=2}},
-      POWER_PLANT={
-        POWERPLANT_CARBOS={id="CARBOS",qty=2},
-        POWERPLANT_RARE_CANDY={id="RARE_CANDY",qty=2},
-      },
-      VICTORY_ROAD_1F={VICTORYROAD1F_RARE_CANDY={id="RARE_CANDY",qty=3}},
-      VICTORY_ROAD_2F={VICTORYROAD2F_FULL_HEAL={id="FULL_RESTORE",qty=2}},
-      VICTORY_ROAD_3F={VICTORYROAD3F_MAX_REVIVE={id="MAX_REVIVE",qty=2}},
-    }
-    -- TEST51 QA ONLY: visibly respawn five representative pickups on map entry.
-    -- Clearing save.itemsTaken before/after CONTINUE proved timing-sensitive, so
-    -- this QA path reconstructs the original map object after the map is loaded.
-    -- Each representative object is re-added only until the player collects it
-    -- once in test51; normal bundle collection then removes it as usual.
-    local rearm51={
-      VIRIDIAN_FOREST="VIRIDIANFOREST_POKE_BALL",
-      MT_MOON_1F="MTMOON1F_ESCAPE_ROPE",
-      ROCKET_HIDEOUT_B1F="ROCKETHIDEOUTB1F_ESCAPE_ROPE",
-      POWER_PLANT="POWERPLANT_RARE_CANDY",
-      VICTORY_ROAD_1F="VICTORYROAD1F_RARE_CANDY",
-    }
-    local okNPC51,NPC51=pcall(require,"src.world.NPC")
-    local function qaKey51(mapid) return "vpPickupQACollectedTest51_"..tostring(mapid) end
-    local function respawnRepresentativePickup51(ev)
-      local mapid=ev and ev.mapId
-      local wanted=mapid and rearm51[mapid]
-      local save=gameRef and gameRef.save
-      if not wanted or not save or save[qaKey51(mapid)] or not (okNPC51 and NPC51) then return end
-      local ow=gameRef and gameRef.stack and gameRef.stack:top()
-      if not (ow and ow.map and ow.map.id==mapid) then return end
-      -- Avoid duplicates if the original ball was never collected on this save.
-      for _,n in ipairs(ow.npcs or {}) do
-        if n and n.def and n.def.name==wanted then return end
-      end
-      local def=nil
-      local sourceObjects=(ow.map.def and ow.map.def.objects)
-        or (gameRef.data and gameRef.data.maps and gameRef.data.maps[mapid] and gameRef.data.maps[mapid].objects)
-        or {}
-      for _,obj in ipairs(sourceObjects) do
-        if obj.name==wanted then def=obj; break end
-      end
-      if not def then
-        mod.log:warn("v1.2.1-test51 QA pickup definition not found "..tostring(mapid).." / "..tostring(wanted))
-        return
-      end
-      local copy={}
-      for k,v in pairs(def) do copy[k]=v end
-      -- Use a QA-only index so the constructor cannot inherit the original
-      -- object's already-taken save id. The bundle hook still keys by def.name.
-      copy.index=240
-      local npc=NPC51.new(gameRef.data,mapid,copy)
-      npc.vpQARearmed51=true
-      npc.vpQAOriginalName51=wanted
-      table.insert(ow.npcs,npc); table.insert(ow.entities,npc)
-      mod.log:info("v1.2.1-test51 visibly re-armed QA pickup "..tostring(mapid).." / "..tostring(wanted))
-    end
-    mod.events:on("map.entered",respawnRepresentativePickup51)
-
-    local function pickupRule48(self,npc)
-      if not (self and self.map and npc and npc.def) then return nil end
-      local byMap=pickup48[self.map.id]
-      if not byMap then return nil end
-      return byMap[npc.def.name]
-    end
-    local function removePickupNpc48(self,npc)
-      local save=gameRef and gameRef.save
-      save.itemsTaken=save.itemsTaken or {}
-      save.itemsTaken[npc.id]=true
-      if npc.vpQARearmed51 and self.map and self.map.id then
-        save["vpPickupQACollectedTest51_"..tostring(self.map.id)]=true
-      end
-      for i,n in ipairs(self.npcs or {}) do if n==npc then table.remove(self.npcs,i) break end end
-      for i,e in ipairs(self.entities or {}) do if e==npc then table.remove(self.entities,i) break end end
-    end
-    if okOW and OverworldState and type(OverworldState.talkTo)=="function"
-       and not OverworldState._vanillaPlusPickupBundlesTest48 then
-      local native=OverworldState.talkTo
-      function OverworldState:talkTo(npc)
-        local rule=pickupRule48(self,npc)
-        if rule and npc.def.item and npc.def.item~="0" and npc.def.item~=0 then
-          npc.frozen=true
-          local save=gameRef.save
-          if not Bag.add(save,rule.id,rule.qty or 1,gameRef.data) then
-            gameRef.stack:push(TextBox.new(gameRef,vpFormatDialogue("No more room for items!"),
-              function() npc.frozen=false end))
-            return
-          end
-          removePickupNpc48(self,npc)
-          local def=gameRef.data.items[rule.id]
-          local name=def and def.name or rule.id
-          local qty=rule.qty or 1
-          local count=(qty>1) and ("x"..tostring(qty).." ") or ""
-          -- One textbox/page. The old form-feed produced PLAYER found, an
-          -- empty-looking beat, then the quantity on a second page.
-          local message=tostring(save.player and save.player.name or "PLAYER").." found\n"..count..tostring(name).."!"
-          gameRef.stack:push(TextBox.new(gameRef,vpFormatDialogue(message),nil,
-            TextBox.soundOpts(gameRef,(def and def.keyItem) and "Get_Key_Item" or "Get_Item1")))
-          return
-        end
-        return native(self,npc)
-      end
-      OverworldState._vanillaPlusPickupBundlesTest48=true
-    end
-  end
-
-  -- Post-Champion Trainer AI diagnostic (test31) ---------------------------
+  -- Post-Champion trainer AI -------------------------------------------------
   -- Test24 proved substantially better move selection and Test25 proved the
   -- six-Pokemon finite-bag / battle-state layer. Test31 retains team management:
   -- matchup-aware replacement after a KO plus conservative voluntary tactical
@@ -5336,7 +5191,7 @@ return function(mod)
       local enc = runtimeEncounter(mapId)
       local group = enc and enc[groupName]
       if not (group and type(group.slots) == "table" and #group.slots > 0) then
-        mod.log:warn("Vanilla+ QA: no %s encounter table for %s", tostring(groupName), tostring(mapId))
+        mod.log:warn("Vanilla+: no %s encounter table for %s", tostring(groupName), tostring(mapId))
         return false
       end
       local slots = copySlots(group.slots)
@@ -5351,7 +5206,7 @@ return function(mod)
       end
       if changed then
         group.slots = slots
-        mod.log:info("Vanilla+ QA: runtime %s encounters repaired for %s", tostring(groupName), tostring(mapId))
+        mod.log:info("Vanilla+: runtime %s encounters updated for %s", tostring(groupName), tostring(mapId))
       end
       return changed
     end
@@ -5372,7 +5227,7 @@ return function(mod)
 
     -- Fossil habitats intentionally cover both walkable cave floor and water.
     -- Seafoam B4F carries the basic fossil lines; Cerulean B1F carries their
-    -- evolved forms. QA slots 1-7 total exactly 90% encounter weight.
+    -- evolved forms. Public rates remain deliberately rare.
     local function repairWildFossils()
       if not mod.options:get("wild_fossils") then return end
       local seafoam = {

@@ -1,20 +1,15 @@
-# Vanilla+ v1.2.2
+# Vanilla+ v1.2.3
 
-Compatibility hotfix for current Gen1Recomp++ builds.
+Small corrective hotfix for the public v1.2.2 compatibility release.
 
-## Highlights
+## Fix
 
-- Updated Vanilla+ for Gen1Recomp++ 0.2.56+ menu/UI lifecycle changes.
-- Repaired Summary / Hidden Stats flow and battle EXP-bar containment.
-- Restored normal Bag quantities and stabilized TM/HM Bag presentation.
-- Improved TM move-name refresh behavior on current Recomp.
-- Preserved Bill's Trade Evolution machine and current custom-dialogue wrapping.
-- Added Mom's TALK / HEAL / PACK TOOLKIT / CANCEL flow.
-- Added a real YES / NO choice when rebuilding a packed Toolkit.
-- Added repeat-acquisition Toolkit dialogue rather than replaying the original first-time handoff.
-- Restored Pokémon Center Chansey support for the Indigo Plateau lobby.
-- Improved household NPC behavior/dialogue support, including Mr. Mime wandering.
-- Preserved current post-Champion mart and Toolkit behavior.
+- Removes an unfinished visible multi-item pickup modernization system that was accidentally left enabled in v1.2.2.
+- Removes the associated QA-only pickup re-arm logic.
+- Restores affected visible Poké Ball pickups to normal native Gen I behavior, fixing a possible `talkTo` / nil `gameRef` crash when collecting certain items such as an S.S. Anne pickup.
+- Corrects the GitHub repository reference in the mod manifest.
+
+All intended v1.2.2 compatibility repairs and released Vanilla+ features are otherwise preserved.
 
 ## Save transfers
 

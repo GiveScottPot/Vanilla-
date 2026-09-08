@@ -1,6 +1,6 @@
 # Vanilla+
 
-**Version:** Beta v1.2.2  
+**Version:** Beta v1.2.3  
 **Developer:** GiveScottPot  
 **For:** Pokémon Red, Blue and Yellow on Gen1Recomp++  
 **Tested baseline:** Gen1Recomp++ 0.2.56
@@ -9,7 +9,7 @@ Vanilla+ expands Gen I without trying to replace what makes Red, Blue, and Yello
 
 Some discoveries are intentionally left out of the documentation. Kanto is more fun when every surprise is not itemized in a README like tax deductions.
 
-## Beta v1.2.2
+## Beta v1.2.3
 
 - Running Shoes integrated into normal early-game progression
 - Hidden Stats / DV and Stat Experience information
@@ -62,8 +62,8 @@ Known tested/working combinations include:
 - **Wilds of Kanto:** core Vanilla+ compatibility remains usable on the current Recomp baseline, but Wilds currently suppresses Vanilla+ WILD FOSSILS encounter injection while enabled. Disable Wilds if you want Vanilla+ fossil encounters until this compatibility issue is resolved.
 - **DRAMALESS SHAPE:** tested in prior known-good stacks; exact current-version compatibility remains stack-dependent.
 - **Dramatic Shape Voxel 1.9.0:** previously tested compatible in known-good stacks.
-- **Potato Voxel:** tested compatible in prior known-good stacks. Current 1.8.3 compatibility should still be reported if anything behaves differently.
-- **Anime Realism:** tested compatible in prior known-good stacks. Current 4.0.2 compatibility testing is welcome.
+- **Potato Voxel:** tested compatible in prior known-good stacks. Current compatibility should still be reported if anything behaves differently.
+- **Anime Realism:** tested compatible in prior known-good stacks. Current-version compatibility testing is welcome.
 
 Do not stack multiple voxel renderers unless their authors explicitly support doing so. Compatibility is tested, not guaranteed across every platform, version, save, or mod combination. See `docs/COMPATIBILITY.md` for details.
 

@@ -1,7 +1,7 @@
 {
   "id": "vanillaplus",
-  "name": "Vanilla+ v1.2.2",
-  "version": "1.2.2",
+  "name": "Vanilla+ v1.2.3",
+  "version": "1.2.3",
   "api": 2,
   "entry": "main.lua",
   "profile": "content",
@@ -23,5 +23,5 @@
   "conflicts": [],
   "affects_link": false,
   "description": "A spoiler-light Gen I expansion with quality-of-life features, encounter options, world interactions, and the expanded Adventurer's Toolkit.",
-  "github": "GiveScottPot/Vanilla-"
+  "github": "GiveScottPot/Vanilla-Plus"
 }
