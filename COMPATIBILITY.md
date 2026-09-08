@@ -1,12 +1,12 @@
 # Vanilla+ Compatibility
 
-Vanilla+ Beta v1.2.2 targets Gen1Recomp++ 0.2.56+ and supports Pokémon Red, Blue, and Yellow.
+Vanilla+ Beta v1.2.3 targets Gen1Recomp++ 0.2.56+ and supports Pokémon Red, Blue, and Yellow.
 
 Compatibility can vary by platform, exact Gen1Recomp++ version, load order, and other enabled mods. Test Vanilla+ by itself first when diagnosing a problem.
 
 ## Current Recomp baseline
 
-Vanilla+ v1.2.2 includes compatibility repairs for the menu, summary, text-box, party, bag, battle HUD/state, and related lifecycle changes introduced in recent Gen1Recomp++ builds.
+Vanilla+ v1.2.3 includes compatibility repairs for the menu, summary, text-box, party, bag, battle HUD/state, and related lifecycle changes introduced in recent Gen1Recomp++ builds.
 
 ## Wilds of Kanto
 
