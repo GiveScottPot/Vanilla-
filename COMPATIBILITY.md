@@ -1,53 +1,106 @@
 # Vanilla+ Compatibility
 
-Vanilla+ Beta v1.2.3 targets Gen1Recomp++ 0.2.56+ and supports Pokémon Red, Blue, and Yellow.
+Vanilla+ v1.3.0 is developed for **Gen1Recomp++ 0.2.56+** and supports Pokémon Red, Blue and Yellow.
 
-Compatibility can vary by platform, exact Gen1Recomp++ version, load order, and other enabled mods. Test Vanilla+ by itself first when diagnosing a problem.
+Compatibility with other mods can vary by platform, Gen1Recomp++ version, load order and whether multiple mods hook the same controls, rendering systems, battle systems or overworld events. The notes below distinguish combinations actually tested during the v1.3.0 stabilization pass from current versions that were not part of this release QA.
 
-## Current Recomp baseline
+## Tested during v1.3.0 QA
 
-Vanilla+ v1.2.3 includes compatibility repairs for the menu, summary, text-box, party, bag, battle HUD/state, and related lifecycle changes introduced in recent Gen1Recomp++ builds.
+### Wilds of Kanto v2.1.9
 
-## Wilds of Kanto
+**Status: Compatible in current v1.3.0 QA**
 
-**Status: Partial compatibility on the current Recomp baseline**
+Current testing confirms:
 
-Vanilla+ and Wilds can run together for many features, including the fixed-step SELECT/Register behavior previously tested with Wilds. However, current QA confirms a specific encounter conflict:
+- Toolkit Hot Air Balloon travel completes normally with Wilds enabled.
+- Ordinary Pokémon Fly still works afterward.
+- Vanilla+ fossil encounters can appear as Wilds overworld spawns.
+- Mr. Mime is handed through the Wilds species-skin/refresh path correctly.
+- ALL-CART merged encounter additions can appear as visible overworld spawns rather than only as random encounters.
 
-- With Wilds disabled, Vanilla+ WILD FOSSILS spawn normally.
-- With Wilds enabled, Vanilla+ injected fossil species do not appear as Wilds overworld spawns.
-- With Wilds enabled, those injected fossils also do not appear through ordinary random encounters.
+The older public warning that Wilds suppressed Vanilla+ fossil encounters is no longer current for v1.3.0.
 
-Until this is resolved, disable Wilds when using Vanilla+ WILD FOSSILS. This is tracked as a compatibility issue rather than a failure of Vanilla+'s fossil encounter table itself.
+### DRAMALESS SHAPE v2.0.3
 
-## Voxel / presentation mods
+**Status: Compatible in current v1.3.0 QA**
 
-DRAMALESS SHAPE, Dramatic Shape Voxel, and Potato Voxel have worked in prior known-good Vanilla+ stacks. Use only one voxel renderer at a time unless the mod authors explicitly support stacking them.
+The native 40×40 Balloon has been tested for correct orientation, vertical movement and takeoff/landing anchoring under the voxel renderer.
 
-Anime Realism has also worked in prior stacks, but dialogue/render injection mods are higher-risk compatibility targets when Recomp internals change.
+### PotatoVoxel v1.9.6
 
-## Save transfer / Toolkit
+**Status: Compatible in current v1.3.0 QA**
 
-Raw 32 KB Gen I `.sav` exports do not carry Recomp/Vanilla+ modData. Before exporting/transferring a save, deleting or reinstalling Recomp, or moving platforms, talk to Mom and use **PACK TOOLKIT**.
+The same Balloon compatibility path has been tested successfully. Ordinary player placement remains controlled by the normal Fly destination logic.
 
-Packing returns Toolkit-managed physical items to vanilla PC + Bag storage where possible. After import/reinstall, Mom can rebuild the Toolkit.
+## Current versions not tested in this release QA
 
-## Game testing
+### Anime Realism v4.2.10
 
-- **Pokémon Red:** primary development/regression baseline.
-- **Pokémon Blue:** supported; full start-to-finish regression testing is still useful.
-- **Pokémon Yellow:** supported; full start-to-finish regression testing is still useful.
+**Status: Not tested with v1.3.0**
+
+Anime Realism was not included in the current v1.3.0 stabilization pass. Do not treat earlier compatibility results from older Anime Realism / Vanilla+ versions as confirmation for this exact combination.
+
+### Weather FX v4.31.2
+
+**Status: Not tested with v1.3.0**
+
+Weather FX was not included in the current v1.3.0 stabilization pass. Compatibility with this exact version remains unverified for the release.
+
+## Renderer / mod-stack note
+
+Renderer and presentation mods can change internal draw paths between releases. If an issue appears, report the exact mod version and Gen1Recomp++ version used.
+
+Do not stack multiple voxel/rendering mods unless their authors explicitly support that combination.
+
+## Game / platform testing
+
+### Pokémon Red
+
+**Status: Primary QA baseline**
+
+Red remains the main development and regression-testing cartridge.
+
+### Pokémon Blue
+
+**Status: Supported**
+
+Vanilla+ is designed to support Blue alongside Red and Yellow. Continued cart-specific testing is welcome.
+
+### Pokémon Yellow
+
+**Status: Supported and actively tested**
+
+v1.3.0's ALL-CART work specifically audits Yellow-only encounter availability and merges it without replacing the selected cartridge's base ecology.
+
+## Save transfer / Expanded Storage
+
+The normal Gen I player-facing storage limits are:
+
+- **Bag: 20 distinct item slots**
+- **Player PC: 50 distinct item slots**
+
+Vanilla+'s optional **EXPANDED STORAGE** can exceed those limits. Before disabling the setting, removing Vanilla+, or moving a raw `.sav` to an environment without expanded storage:
+
+1. Leave Expanded Storage enabled.
+2. Use **Mom → PACK TOOLKIT** so supported Toolkit items are returned to ordinary storage.
+3. Mom reports how many Toolkit-managed physical items are being returned; use that number as a practical guide while freeing normal storage space.
+4. Reduce the packed save to no more than 20 Bag items and 50 Player PC items.
+5. Only then disable/remove the feature or move the save.
+
+Deleting ordinary consumables may free capacity without changing Mom's return count because her number reflects Toolkit-managed physical items being returned, not every item already in the Bag.
+
+Items left beyond stock capacity may become inaccessible or be lost when the expanded-storage system is no longer active.
+
+Raw `.sav` exports preserve normal SRAM but do not necessarily preserve Vanilla+/Recomp modData. PACK TOOLKIT exists specifically to make supported physical items portable through that limitation.
 
 ## Reporting compatibility problems
 
-Please include:
-- Game: Red, Blue, or Yellow
-- Platform/device
-- Exact Gen1Recomp++ version
-- Vanilla+ version
-- Other enabled mods and exact versions
-- Whether the issue occurs with Vanilla+ by itself
-- Reproduction steps
-- Screenshot or video when possible
+Include:
 
-Back up important saves before changing Gen1Recomp++ versions or significantly changing your mod stack.
+- Red, Blue or Yellow
+- Exact Gen1Recomp++ version
+- Platform/device
+- Exact versions of other enabled mods
+- Whether the issue occurs with Vanilla+ alone
+- Whether a full app restart changes the behavior
+- Screenshot/video and reproduction steps when possible
