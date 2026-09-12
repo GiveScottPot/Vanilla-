@@ -1,28 +1,47 @@
-# Changelog
+# Vanilla+ Changelog
 
-## v1.2.3
+## v1.3.0 — Compatibility, encounters, Balloon and storage
 
-- Removed the unfinished visible multi-item pickup modernization system that accidentally remained in the public v1.2.2 build.
-- Removed the associated TEST51 QA-only pickup re-arm hooks from the public build.
-- Restored affected visible Poké Ball pickups, including the S.S. Anne pickup path, to native Gen I behavior.
-- Audited the public branch for other active QA-only feature hooks; no other comparable unreleased subsystem was found enabled.
-- Corrected the manifest GitHub repository reference to `GiveScottPot/Vanilla-Plus`.
-- Preserves all intended v1.2.2 Gen1Recomp++ 0.2.56+ compatibility fixes and released Vanilla+ systems.
+- Added optional **Expanded Storage** for Bag/Player PC headroom.
+- Added save-safety guidance for returning to the normal **20-slot Bag / 50-slot Player PC** limits before disabling the feature or using the save without Vanilla+.
+- Finalized the native **40×40 Hot Air Balloon** travel sprite and vertical travel sequence.
+- Fixed Balloon rendering/positioning with Potato Voxel and DRAMALESS SHAPE.
+- Verified Wilds of Kanto Balloon compatibility and ordinary Fly restoration.
+- Completed the ALL-CART encounter merge, including Yellow-only Surf and Super Rod additions.
+- Added the Wilds runtime encounter bridge so merged Vanilla+ encounters can appear as visible overworld spawns.
+- Restored Wilds visualization for Vanilla+ fossil encounters and Mr. Mime.
+- Hardened TM/HM recognition across mod-stack/reload state.
+- Hardened shared custom dialogue wrapping, pagination and stale game-stack handling.
+- Removed the retired experimental visible-pickup bundle/re-arm subsystem.
+- Preserved existing save compatibility and Mom's PACK TOOLKIT transfer workflow.
 
-## v1.2.2
+## v1.2.3 — Pickup cleanup hotfix
 
-- Current Gen1Recomp++ 0.2.56+ compatibility hotfix.
-- Fixed Summary / Hidden Stats page flow regressions.
-- Prevented battle EXP UI from bleeding into move-selection screens.
-- Restored normal Bag quantity rendering.
-- Updated TM/HM Bag status/footer handling and TM move-name refresh behavior.
-- Improved shared custom-dialogue compatibility on current Recomp.
-- Added Mom TALK / HEAL / PACK TOOLKIT / CANCEL structure.
-- Added true YES / NO Toolkit rebuild choice and repeat-acquisition dialogue.
-- Restored Indigo Plateau Chansey injection.
-- Preserved Bill Trade Evolution, post-Champion marts, Toolkit systems, and existing save compatibility behavior.
-- Documented the current Wilds of Kanto conflict that suppresses Vanilla+ injected fossil encounters while Wilds is enabled.
+- Removed the public multi-item pickup experiment after crash/regression reports.
+- Restored ordinary visible pickups to stable behavior.
+
+## v1.2.2 — Compatibility hotfix line
+
+- Continued current-Recomp UI/menu/dialogue compatibility work.
+- Preserved the v1.2.x QoL, Toolkit, encounter and postgame feature set.
 
 ## v1.2.1
 
-- Previous public beta baseline.
+- Running Shoes and core QoL systems.
+- Hidden Stats / DV and Stat Experience information.
+- Battle EXP progress display and caught-species indicators.
+- Adventurer's Toolkit expansion and TM/HM Bag.
+- Optional reusable TMs.
+- Post-Champion marts, encounter options and additional world interactions.
+
+## v1.2.0
+
+- Major Toolkit/QoL expansion and compatibility work.
+
+## v1.1.0
+
+- Expanded Vanilla+ feature set and settings.
+
+## v1.0.0
+
+- Initial public Vanilla+ release.

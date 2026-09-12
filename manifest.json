@@ -1,7 +1,7 @@
 {
   "id": "vanillaplus",
-  "name": "Vanilla+ v1.2.3",
-  "version": "1.2.3",
+  "name": "Vanilla+ v1.3.0",
+  "version": "1.3.0",
   "api": 2,
   "entry": "main.lua",
   "profile": "content",
@@ -10,7 +10,7 @@
   "games": [
     "gen1"
   ],
-  "priority": 110,
+  "priority": 112,
   "permissions": [
     "engine_internals"
   ],
@@ -18,10 +18,11 @@
   "optional_dependencies": [
     "overworld_wild_spawns",
     "dramatic_shape",
-    "potato_voxel"
+    "potato_voxel",
+    "DRAMALESS_SHAPE"
   ],
   "conflicts": [],
   "affects_link": false,
-  "description": "A spoiler-light Gen I expansion with quality-of-life features, encounter options, world interactions, and the expanded Adventurer's Toolkit.",
+  "description": "A spoiler-light Gen I expansion with optional QoL features, encounter options, inventory tools, world interactions, and postgame content.",
   "github": "GiveScottPot/Vanilla-Plus"
 }

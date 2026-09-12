@@ -1,13 +1,13 @@
 return {
-  summary = "A spoiler-light Gen I expansion focused on quality-of-life, encounters, field actions, and optional world improvements.",
+  summary = "A spoiler-light Gen I expansion focused on QoL, encounters, field actions, inventory tools, and optional postgame content.",
   author = "GiveScottPot",
   tags = { "VANILLA+", "QOL", "DVS", "ENCOUNTERS", "GEN1" },
   differences = {
-    "Adds quality-of-life features while preserving the feel of Red, Blue and Yellow.",
-    "Adds optional encounter, travel, field-action and world-interaction improvements.",
-    "Adds Hidden Stats information, Running Shoes, persistent Cut trees and Bill's Trade Evolution system.",
-    "Expands the Adventurer's Toolkit with Fishing, TM/HM Bag, Equipment, Keys & Tickets, registration shortcuts and optional Reusable TMs.",
-    "Includes additional optional content and discoveries not fully spoiled in the feature list."
+    "Adds optional quality-of-life features while preserving the feel of Red, Blue and Yellow.",
+    "Adds expanded encounter options, field/travel conveniences and additional world interactions.",
+    "Adds Hidden Stats information, Running Shoes, persistent Cut trees and Bill's single-player trade-evolution system.",
+    "Expands the Adventurer's Toolkit with Fishing, TM/HM Bag, Equipment, Keys & Tickets, registration shortcuts and the Hot Air Balloon.",
+    "Adds optional Expanded Storage and post-Champion utility/content without requiring a new save."
   },
   credits = {
     "Developed and tested by GiveScottPot entirely from iPhone.",

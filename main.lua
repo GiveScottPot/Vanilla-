@@ -1,4 +1,4 @@
--- Vanilla+ v1.2.3 compatibility hotfix for Gen1Recomp++ 0.2.56+
+-- Vanilla+ v1.3.0 - public release
 -- Native-style hidden-stat page for Pokémon summaries.
 -- A/B: Stats -> Hidden Stats -> Moves -> close
 -- SELECT on Hidden Stats: DVs <-> Stat Exp
@@ -150,6 +150,14 @@ return function(mod)
       help = "Adds a postgame field-tool system that consolidates useful exploration gear and shortcuts.",
     },
     {
+      key = "expanded_storage",
+      label = "EXPANDED STORAGE",
+      type = "toggle",
+      default = true,
+      description = "Expands BAG and PLAYER PC storage. Return to 20 BAG / 50 PC item slots before disabling or removing Vanilla+.",
+      help = "WARNING: Before disabling EXPANDED STORAGE, removing Vanilla+, or loading the save without it, PACK TOOLKIT and reduce storage to the normal 20 BAG / 50 PC item-slot limits. Over-capacity items may become inaccessible or be lost.",
+    },
+    {
       key = "postgame_mimey",
       label = "POSTGAME MR MIME",
       type = "toggle",
@@ -166,6 +174,73 @@ return function(mod)
       help = "Adds optional extra dialogue to select NPCs after relevant story milestones.",
     },
   })
+
+  -- Expanded storage -------------------------------------------------------
+  -- Vanilla+ keeps stock limits when the option is OFF.  When enabled, the
+  -- ordinary ITEM/BALL/KEY_ITEM pockets and Player PC get comfortable QoL
+  -- headroom while the native TM/HM pocket remains at 57 (already enough for
+  -- every Gen-I TM/HM).  Capacity checks are patched at the engine API so all
+  -- pickups, shops, PC withdrawals and Toolkit packing obey the same limits.
+  do
+    local Bag = require("src.inventory.Bag")
+    local Data = require("src.core.Data")
+
+    local VP_STORAGE_CAP = {
+      ITEM = 40,
+      BALL = 24,
+      KEY_ITEM = 40,
+      TM_HM = 57,
+    }
+    local VP_PC_CAP = 100
+    local STOCK_PC_CAP = 50
+
+    -- Refreshable getter avoids a stale mod/options closure after an in-app
+    -- mod reload while keeping the Bag wrapper installed only once.
+    Bag._vanillaPlusExpandedStorageEnabled = function()
+      return mod.options:get("expanded_storage") == true
+    end
+    Bag._vanillaPlusExpandedStorageCaps = VP_STORAGE_CAP
+
+    if not Bag._vanillaPlusExpandedStorageWrapped then
+      Bag._vanillaPlusExpandedStorageWrapped = true
+      local previousCapacity = Bag.capacity
+      Bag._vanillaPlusBaseCapacity = previousCapacity
+      function Bag.capacity(data, pocket)
+        local enabled = Bag._vanillaPlusExpandedStorageEnabled
+          and Bag._vanillaPlusExpandedStorageEnabled()
+        if enabled then
+          local target = Bag._vanillaPlusExpandedStorageCaps
+            and Bag._vanillaPlusExpandedStorageCaps[pocket or "ITEM"]
+          if target then return target end
+        end
+        return previousCapacity(data, pocket)
+      end
+    end
+
+    local function applyPcStorageCap(data)
+      data = data or Data
+      if not (data and data.field) then return end
+      data.field.pcItemCap = mod.options:get("expanded_storage") and VP_PC_CAP or STOCK_PC_CAP
+    end
+
+    -- Apply immediately and again whenever the Player PC is opened, so changing
+    -- the option takes effect without requiring a restart.
+    applyPcStorageCap(Data)
+    local okPlayerPC, PlayerPC = pcall(require, "src.ui.PlayerPC")
+    if okPlayerPC and PlayerPC then
+      PlayerPC._vanillaPlusApplyStorageCap = applyPcStorageCap
+      if not PlayerPC._vanillaPlusExpandedStorageWrapped then
+        PlayerPC._vanillaPlusExpandedStorageWrapped = true
+        local previousPCNewForStorage = PlayerPC.new
+        function PlayerPC.new(game, opts)
+          if PlayerPC._vanillaPlusApplyStorageCap then
+            PlayerPC._vanillaPlusApplyStorageCap(game and game.data)
+          end
+          return previousPCNewForStorage(game, opts)
+        end
+      end
+    end
+  end
 
   -- Vanilla+ option help ----------------------------------------------------
   do
@@ -216,7 +291,7 @@ return function(mod)
   end
 
 
-  -- Red/Blue counterpart encounter support.
+  -- Experimental encounter preview.
   --
   -- For the four closely mirrored Red/Blue exclusive families, if an encounter
   -- table contains at least two slots of one counterpart and none of the other,
@@ -399,47 +474,18 @@ return function(mod)
     end
 
     local function injectSpecies(slots, wanted)
-      if type(slots) ~= "table" or #slots == 0 then
+      if type(slots) ~= "table" or #slots < 7 then
         return nil
       end
 
       local updated = copySlots(slots)
-      local present = {}
-      for _, slot in ipairs(updated) do
-        present[slot.species] = true
-      end
 
-      local missing = {}
-      for _, species in ipairs(wanted) do
-        if not present[species] then
-          missing[#missing + 1] = species
-        end
-      end
-      if #missing == 0 then
-        return nil
-      end
-
-      -- Prefer replacing repeated species, starting from the rarest/end slots.
-      local counts = {}
-      for _, slot in ipairs(updated) do
-        counts[slot.species] = (counts[slot.species] or 0) + 1
-      end
-
-      local replaceable = {}
-      for index = #updated, 1, -1 do
-        local species = updated[index].species
-        if counts[species] and counts[species] > 1 then
-          replaceable[#replaceable + 1] = index
-          counts[species] = counts[species] - 1
-        end
-      end
-
-      if #replaceable < #missing then
-        return nil
-      end
-
-      for i, species in ipairs(missing) do
-        updated[replaceable[i]].species = species
+      -- FOSSIL QA ONLY: Gen I encounter slots 1-7 carry 90% total weight
+      -- (20+20+15+10+10+10+5). Fill exactly those slots with the
+      -- target fossils while leaving slots 8-10 native, giving us a true
+      -- ~90% fossil test without suppressing the encounter table itself.
+      for index = 1, 7 do
+        updated[index].species = wanted[((index - 1) % #wanted) + 1]
       end
       return updated
     end
@@ -483,62 +529,1006 @@ return function(mod)
   applyWildFossils()
 
 
-  local function applyYellowRouteEncounters()
-    if not mod.options:get("yellow_route_encounters") then return end
+  -- Complete Yellow encounter availability for ALL-CART ENCOUNTERS.
+  -- These tables are extracted from the actual Yellow ROM shipped into the
+  -- Recomp importer.  The current cartridge remains the base: where it has a
+  -- table, successful encounters are occasionally substituted with Yellow
+  -- species missing from that map; where R/B have no water table, the Yellow
+  -- table is used directly.  This avoids the ten-slot hard cap that made a
+  -- literal table merge impossible in Safari/Cerulean Cave while preserving
+  -- every native current-cart species as encounterable.
+  local YELLOW_ENCOUNTER_TABLES = {
+    ROUTE_2 = {
+      grass = { rate = 25, slots = {
+        { level = 3, species = "RATTATA" },
+        { level = 3, species = "PIDGEY" },
+        { level = 4, species = "RATTATA" },
+        { level = 4, species = "NIDORAN_M" },
+        { level = 4, species = "NIDORAN_F" },
+        { level = 5, species = "PIDGEY" },
+        { level = 6, species = "NIDORAN_M" },
+        { level = 6, species = "NIDORAN_F" },
+        { level = 7, species = "PIDGEY" },
+        { level = 7, species = "PIDGEY" },
+      } },
+    },
+    ROUTE_3 = {
+      grass = { rate = 20, slots = {
+        { level = 8, species = "SPEAROW" },
+        { level = 9, species = "SPEAROW" },
+        { level = 9, species = "MANKEY" },
+        { level = 10, species = "SPEAROW" },
+        { level = 8, species = "SANDSHREW" },
+        { level = 10, species = "RATTATA" },
+        { level = 10, species = "SANDSHREW" },
+        { level = 12, species = "RATTATA" },
+        { level = 11, species = "SPEAROW" },
+        { level = 12, species = "SPEAROW" },
+      } },
+    },
+    ROUTE_4 = {
+      grass = { rate = 20, slots = {
+        { level = 8, species = "SPEAROW" },
+        { level = 9, species = "SPEAROW" },
+        { level = 9, species = "MANKEY" },
+        { level = 10, species = "SPEAROW" },
+        { level = 8, species = "SANDSHREW" },
+        { level = 10, species = "RATTATA" },
+        { level = 10, species = "SANDSHREW" },
+        { level = 12, species = "RATTATA" },
+        { level = 11, species = "SPEAROW" },
+        { level = 12, species = "SPEAROW" },
+      } },
+    },
+    ROUTE_5 = {
+      grass = { rate = 15, slots = {
+        { level = 15, species = "PIDGEY" },
+        { level = 14, species = "RATTATA" },
+        { level = 7, species = "ABRA" },
+        { level = 16, species = "PIDGEY" },
+        { level = 16, species = "RATTATA" },
+        { level = 17, species = "PIDGEY" },
+        { level = 17, species = "PIDGEOTTO" },
+        { level = 3, species = "JIGGLYPUFF" },
+        { level = 5, species = "JIGGLYPUFF" },
+        { level = 7, species = "JIGGLYPUFF" },
+      } },
+    },
+    ROUTE_6 = {
+      grass = { rate = 15, slots = {
+        { level = 15, species = "PIDGEY" },
+        { level = 14, species = "RATTATA" },
+        { level = 7, species = "ABRA" },
+        { level = 16, species = "PIDGEY" },
+        { level = 16, species = "RATTATA" },
+        { level = 17, species = "PIDGEY" },
+        { level = 17, species = "PIDGEOTTO" },
+        { level = 3, species = "JIGGLYPUFF" },
+        { level = 5, species = "JIGGLYPUFF" },
+        { level = 7, species = "JIGGLYPUFF" },
+      } },
+      water = { rate = 3, slots = {
+        { level = 15, species = "PSYDUCK" },
+        { level = 15, species = "PSYDUCK" },
+        { level = 15, species = "PSYDUCK" },
+        { level = 15, species = "PSYDUCK" },
+        { level = 15, species = "PSYDUCK" },
+        { level = 15, species = "PSYDUCK" },
+        { level = 15, species = "PSYDUCK" },
+        { level = 15, species = "PSYDUCK" },
+        { level = 15, species = "GOLDUCK" },
+        { level = 20, species = "GOLDUCK" },
+      } },
+    },
+    ROUTE_7 = {
+      grass = { rate = 15, slots = {
+        { level = 20, species = "PIDGEY" },
+        { level = 22, species = "PIDGEY" },
+        { level = 20, species = "RATTATA" },
+        { level = 15, species = "ABRA" },
+        { level = 19, species = "ABRA" },
+        { level = 24, species = "PIDGEOTTO" },
+        { level = 26, species = "ABRA" },
+        { level = 19, species = "JIGGLYPUFF" },
+        { level = 24, species = "JIGGLYPUFF" },
+        { level = 24, species = "JIGGLYPUFF" },
+      } },
+    },
+    ROUTE_8 = {
+      grass = { rate = 15, slots = {
+        { level = 20, species = "PIDGEY" },
+        { level = 22, species = "PIDGEY" },
+        { level = 20, species = "RATTATA" },
+        { level = 15, species = "ABRA" },
+        { level = 19, species = "ABRA" },
+        { level = 24, species = "PIDGEOTTO" },
+        { level = 19, species = "JIGGLYPUFF" },
+        { level = 24, species = "JIGGLYPUFF" },
+        { level = 20, species = "KADABRA" },
+        { level = 27, species = "KADABRA" },
+      } },
+    },
+    ROUTE_9 = {
+      grass = { rate = 15, slots = {
+        { level = 16, species = "NIDORAN_M" },
+        { level = 16, species = "NIDORAN_F" },
+        { level = 18, species = "RATTATA" },
+        { level = 18, species = "NIDORAN_M" },
+        { level = 18, species = "NIDORAN_F" },
+        { level = 17, species = "SPEAROW" },
+        { level = 18, species = "NIDORINO" },
+        { level = 18, species = "NIDORINA" },
+        { level = 20, species = "RATICATE" },
+        { level = 19, species = "FEAROW" },
+      } },
+    },
+    ROUTE_10 = {
+      grass = { rate = 15, slots = {
+        { level = 16, species = "MAGNEMITE" },
+        { level = 18, species = "RATTATA" },
+        { level = 18, species = "MAGNEMITE" },
+        { level = 20, species = "MAGNEMITE" },
+        { level = 17, species = "NIDORAN_M" },
+        { level = 17, species = "NIDORAN_F" },
+        { level = 22, species = "MAGNEMITE" },
+        { level = 20, species = "RATICATE" },
+        { level = 16, species = "MACHOP" },
+        { level = 18, species = "MACHOP" },
+      } },
+    },
+    ROUTE_11 = {
+      grass = { rate = 15, slots = {
+        { level = 16, species = "PIDGEY" },
+        { level = 15, species = "RATTATA" },
+        { level = 18, species = "PIDGEY" },
+        { level = 15, species = "DROWZEE" },
+        { level = 17, species = "RATTATA" },
+        { level = 17, species = "DROWZEE" },
+        { level = 18, species = "PIDGEOTTO" },
+        { level = 20, species = "PIDGEOTTO" },
+        { level = 19, species = "DROWZEE" },
+        { level = 17, species = "RATICATE" },
+      } },
+    },
+    ROUTE_12 = {
+      grass = { rate = 15, slots = {
+        { level = 25, species = "ODDISH" },
+        { level = 25, species = "BELLSPROUT" },
+        { level = 28, species = "PIDGEY" },
+        { level = 28, species = "PIDGEOTTO" },
+        { level = 27, species = "ODDISH" },
+        { level = 27, species = "BELLSPROUT" },
+        { level = 29, species = "GLOOM" },
+        { level = 29, species = "WEEPINBELL" },
+        { level = 26, species = "FARFETCHD" },
+        { level = 31, species = "FARFETCHD" },
+      } },
+      water = { rate = 3, slots = {
+        { level = 15, species = "SLOWPOKE" },
+        { level = 15, species = "SLOWPOKE" },
+        { level = 15, species = "SLOWPOKE" },
+        { level = 15, species = "SLOWPOKE" },
+        { level = 15, species = "SLOWPOKE" },
+        { level = 15, species = "SLOWPOKE" },
+        { level = 15, species = "SLOWPOKE" },
+        { level = 15, species = "SLOWPOKE" },
+        { level = 15, species = "SLOWBRO" },
+        { level = 20, species = "SLOWBRO" },
+      } },
+    },
+    ROUTE_13 = {
+      grass = { rate = 15, slots = {
+        { level = 25, species = "ODDISH" },
+        { level = 25, species = "BELLSPROUT" },
+        { level = 28, species = "PIDGEOTTO" },
+        { level = 28, species = "PIDGEY" },
+        { level = 27, species = "ODDISH" },
+        { level = 27, species = "BELLSPROUT" },
+        { level = 29, species = "GLOOM" },
+        { level = 29, species = "WEEPINBELL" },
+        { level = 26, species = "FARFETCHD" },
+        { level = 31, species = "FARFETCHD" },
+      } },
+      water = { rate = 3, slots = {
+        { level = 15, species = "SLOWPOKE" },
+        { level = 15, species = "SLOWPOKE" },
+        { level = 15, species = "SLOWPOKE" },
+        { level = 15, species = "SLOWPOKE" },
+        { level = 15, species = "SLOWPOKE" },
+        { level = 15, species = "SLOWPOKE" },
+        { level = 15, species = "SLOWPOKE" },
+        { level = 15, species = "SLOWPOKE" },
+        { level = 15, species = "SLOWBRO" },
+        { level = 20, species = "SLOWBRO" },
+      } },
+    },
+    ROUTE_14 = {
+      grass = { rate = 15, slots = {
+        { level = 26, species = "ODDISH" },
+        { level = 26, species = "BELLSPROUT" },
+        { level = 24, species = "VENONAT" },
+        { level = 30, species = "PIDGEOTTO" },
+        { level = 28, species = "ODDISH" },
+        { level = 28, species = "BELLSPROUT" },
+        { level = 30, species = "GLOOM" },
+        { level = 30, species = "WEEPINBELL" },
+        { level = 27, species = "VENONAT" },
+        { level = 30, species = "VENOMOTH" },
+      } },
+    },
+    ROUTE_15 = {
+      grass = { rate = 15, slots = {
+        { level = 26, species = "ODDISH" },
+        { level = 26, species = "BELLSPROUT" },
+        { level = 24, species = "VENONAT" },
+        { level = 32, species = "PIDGEOTTO" },
+        { level = 28, species = "ODDISH" },
+        { level = 28, species = "BELLSPROUT" },
+        { level = 30, species = "GLOOM" },
+        { level = 30, species = "WEEPINBELL" },
+        { level = 27, species = "VENONAT" },
+        { level = 30, species = "VENOMOTH" },
+      } },
+    },
+    ROUTE_16 = {
+      grass = { rate = 25, slots = {
+        { level = 22, species = "SPEAROW" },
+        { level = 22, species = "DODUO" },
+        { level = 23, species = "RATTATA" },
+        { level = 24, species = "DODUO" },
+        { level = 24, species = "RATTATA" },
+        { level = 26, species = "DODUO" },
+        { level = 23, species = "SPEAROW" },
+        { level = 24, species = "FEAROW" },
+        { level = 25, species = "RATICATE" },
+        { level = 26, species = "RATICATE" },
+      } },
+    },
+    ROUTE_17 = {
+      grass = { rate = 25, slots = {
+        { level = 26, species = "DODUO" },
+        { level = 27, species = "FEAROW" },
+        { level = 27, species = "DODUO" },
+        { level = 28, species = "DODUO" },
+        { level = 28, species = "PONYTA" },
+        { level = 30, species = "PONYTA" },
+        { level = 29, species = "FEAROW" },
+        { level = 28, species = "DODUO" },
+        { level = 32, species = "PONYTA" },
+        { level = 29, species = "DODRIO" },
+      } },
+    },
+    ROUTE_18 = {
+      grass = { rate = 25, slots = {
+        { level = 22, species = "SPEAROW" },
+        { level = 22, species = "DODUO" },
+        { level = 23, species = "RATTATA" },
+        { level = 24, species = "DODUO" },
+        { level = 24, species = "RATTATA" },
+        { level = 26, species = "DODUO" },
+        { level = 23, species = "SPEAROW" },
+        { level = 24, species = "FEAROW" },
+        { level = 25, species = "RATICATE" },
+        { level = 26, species = "RATICATE" },
+      } },
+    },
+    ROUTE_22 = {
+      grass = { rate = 25, slots = {
+        { level = 2, species = "NIDORAN_M" },
+        { level = 2, species = "NIDORAN_F" },
+        { level = 3, species = "MANKEY" },
+        { level = 3, species = "RATTATA" },
+        { level = 4, species = "NIDORAN_M" },
+        { level = 4, species = "NIDORAN_F" },
+        { level = 5, species = "MANKEY" },
+        { level = 2, species = "SPEAROW" },
+        { level = 4, species = "SPEAROW" },
+        { level = 6, species = "SPEAROW" },
+      } },
+    },
+    ROUTE_23 = {
+      grass = { rate = 10, slots = {
+        { level = 41, species = "NIDORINO" },
+        { level = 41, species = "NIDORINA" },
+        { level = 36, species = "MANKEY" },
+        { level = 44, species = "NIDORINO" },
+        { level = 44, species = "NIDORINA" },
+        { level = 40, species = "FEAROW" },
+        { level = 41, species = "MANKEY" },
+        { level = 45, species = "FEAROW" },
+        { level = 41, species = "PRIMEAPE" },
+        { level = 46, species = "PRIMEAPE" },
+      } },
+    },
+    ROUTE_24 = {
+      grass = { rate = 25, slots = {
+        { level = 12, species = "ODDISH" },
+        { level = 12, species = "BELLSPROUT" },
+        { level = 13, species = "PIDGEY" },
+        { level = 14, species = "ODDISH" },
+        { level = 14, species = "BELLSPROUT" },
+        { level = 15, species = "PIDGEY" },
+        { level = 13, species = "VENONAT" },
+        { level = 16, species = "VENONAT" },
+        { level = 17, species = "PIDGEY" },
+        { level = 17, species = "PIDGEOTTO" },
+      } },
+    },
+    ROUTE_25 = {
+      grass = { rate = 15, slots = {
+        { level = 12, species = "ODDISH" },
+        { level = 12, species = "BELLSPROUT" },
+        { level = 13, species = "PIDGEY" },
+        { level = 14, species = "ODDISH" },
+        { level = 14, species = "BELLSPROUT" },
+        { level = 15, species = "PIDGEY" },
+        { level = 13, species = "VENONAT" },
+        { level = 16, species = "VENONAT" },
+        { level = 17, species = "PIDGEY" },
+        { level = 17, species = "PIDGEOTTO" },
+      } },
+    },
+    VIRIDIAN_FOREST = {
+      grass = { rate = 25, slots = {
+        { level = 3, species = "CATERPIE" },
+        { level = 4, species = "METAPOD" },
+        { level = 4, species = "CATERPIE" },
+        { level = 5, species = "CATERPIE" },
+        { level = 4, species = "PIDGEY" },
+        { level = 6, species = "PIDGEY" },
+        { level = 6, species = "CATERPIE" },
+        { level = 6, species = "METAPOD" },
+        { level = 8, species = "PIDGEY" },
+        { level = 9, species = "PIDGEOTTO" },
+      } },
+    },
+    MT_MOON_1F = {
+      grass = { rate = 10, slots = {
+        { level = 8, species = "ZUBAT" },
+        { level = 9, species = "ZUBAT" },
+        { level = 10, species = "GEODUDE" },
+        { level = 6, species = "ZUBAT" },
+        { level = 7, species = "ZUBAT" },
+        { level = 10, species = "ZUBAT" },
+        { level = 10, species = "GEODUDE" },
+        { level = 11, species = "ZUBAT" },
+        { level = 12, species = "SANDSHREW" },
+        { level = 11, species = "CLEFAIRY" },
+      } },
+    },
+    POWER_PLANT = {
+      grass = { rate = 10, slots = {
+        { level = 30, species = "MAGNEMITE" },
+        { level = 35, species = "MAGNEMITE" },
+        { level = 33, species = "MAGNETON" },
+        { level = 33, species = "VOLTORB" },
+        { level = 37, species = "VOLTORB" },
+        { level = 33, species = "GRIMER" },
+        { level = 37, species = "GRIMER" },
+        { level = 38, species = "MAGNETON" },
+        { level = 33, species = "MUK" },
+        { level = 37, species = "MUK" },
+      } },
+    },
+    SEAFOAM_ISLANDS_B1F = {
+      grass = { rate = 10, slots = {
+        { level = 27, species = "ZUBAT" },
+        { level = 26, species = "KRABBY" },
+        { level = 36, species = "ZUBAT" },
+        { level = 28, species = "KRABBY" },
+        { level = 27, species = "GOLBAT" },
+        { level = 29, species = "SLOWPOKE" },
+        { level = 18, species = "ZUBAT" },
+        { level = 28, species = "KINGLER" },
+        { level = 22, species = "SEEL" },
+        { level = 26, species = "SEEL" },
+      } },
+    },
+    SEAFOAM_ISLANDS_B2F = {
+      grass = { rate = 10, slots = {
+        { level = 27, species = "ZUBAT" },
+        { level = 27, species = "KRABBY" },
+        { level = 36, species = "ZUBAT" },
+        { level = 27, species = "GOLBAT" },
+        { level = 28, species = "KINGLER" },
+        { level = 24, species = "SEEL" },
+        { level = 29, species = "KRABBY" },
+        { level = 36, species = "GOLBAT" },
+        { level = 31, species = "SLOWPOKE" },
+        { level = 31, species = "SLOWBRO" },
+      } },
+    },
+    SEAFOAM_ISLANDS_B3F = {
+      grass = { rate = 10, slots = {
+        { level = 27, species = "GOLBAT" },
+        { level = 36, species = "ZUBAT" },
+        { level = 29, species = "KRABBY" },
+        { level = 27, species = "ZUBAT" },
+        { level = 30, species = "KINGLER" },
+        { level = 26, species = "SEEL" },
+        { level = 31, species = "KRABBY" },
+        { level = 30, species = "SEEL" },
+        { level = 28, species = "DEWGONG" },
+        { level = 32, species = "DEWGONG" },
+      } },
+      water = { rate = 5, slots = {
+        { level = 25, species = "TENTACOOL" },
+        { level = 30, species = "TENTACOOL" },
+        { level = 20, species = "TENTACOOL" },
+        { level = 30, species = "STARYU" },
+        { level = 35, species = "TENTACOOL" },
+        { level = 30, species = "STARYU" },
+        { level = 40, species = "TENTACOOL" },
+        { level = 30, species = "STARYU" },
+        { level = 30, species = "STARYU" },
+        { level = 30, species = "STARYU" },
+      } },
+    },
+    SEAFOAM_ISLANDS_B4F = {
+      grass = { rate = 10, slots = {
+        { level = 36, species = "GOLBAT" },
+        { level = 36, species = "ZUBAT" },
+        { level = 30, species = "KRABBY" },
+        { level = 32, species = "KINGLER" },
+        { level = 28, species = "SEEL" },
+        { level = 32, species = "SEEL" },
+        { level = 27, species = "GOLBAT" },
+        { level = 45, species = "ZUBAT" },
+        { level = 30, species = "DEWGONG" },
+        { level = 34, species = "DEWGONG" },
+      } },
+      water = { rate = 5, slots = {
+        { level = 25, species = "TENTACOOL" },
+        { level = 30, species = "TENTACOOL" },
+        { level = 20, species = "TENTACOOL" },
+        { level = 30, species = "STARYU" },
+        { level = 35, species = "TENTACOOL" },
+        { level = 30, species = "STARYU" },
+        { level = 40, species = "TENTACOOL" },
+        { level = 30, species = "STARYU" },
+        { level = 30, species = "STARYU" },
+        { level = 30, species = "STARYU" },
+      } },
+    },
+    POKEMON_MANSION_1F = {
+      grass = { rate = 10, slots = {
+        { level = 34, species = "RATTATA" },
+        { level = 34, species = "RATICATE" },
+        { level = 23, species = "GRIMER" },
+        { level = 26, species = "GROWLITHE" },
+        { level = 37, species = "RATTATA" },
+        { level = 37, species = "RATICATE" },
+        { level = 30, species = "GROWLITHE" },
+        { level = 26, species = "GRIMER" },
+        { level = 34, species = "GROWLITHE" },
+        { level = 38, species = "GROWLITHE" },
+      } },
+    },
+    POKEMON_MANSION_2F = {
+      grass = { rate = 10, slots = {
+        { level = 37, species = "RATTATA" },
+        { level = 37, species = "RATICATE" },
+        { level = 26, species = "GRIMER" },
+        { level = 29, species = "GRIMER" },
+        { level = 40, species = "RATTATA" },
+        { level = 40, species = "RATICATE" },
+        { level = 32, species = "GRIMER" },
+        { level = 35, species = "GRIMER" },
+        { level = 35, species = "MUK" },
+        { level = 38, species = "MUK" },
+      } },
+    },
+    POKEMON_MANSION_3F = {
+      grass = { rate = 10, slots = {
+        { level = 40, species = "RATTATA" },
+        { level = 40, species = "RATICATE" },
+        { level = 32, species = "GRIMER" },
+        { level = 35, species = "GRIMER" },
+        { level = 43, species = "RATTATA" },
+        { level = 43, species = "RATICATE" },
+        { level = 38, species = "GRIMER" },
+        { level = 38, species = "GRIMER" },
+        { level = 38, species = "MUK" },
+        { level = 41, species = "MUK" },
+      } },
+    },
+    POKEMON_MANSION_B1F = {
+      grass = { rate = 10, slots = {
+        { level = 35, species = "GRIMER" },
+        { level = 38, species = "GRIMER" },
+        { level = 37, species = "RATICATE" },
+        { level = 40, species = "RATICATE" },
+        { level = 41, species = "MUK" },
+        { level = 43, species = "RATICATE" },
+        { level = 24, species = "DITTO" },
+        { level = 46, species = "RATICATE" },
+        { level = 18, species = "DITTO" },
+        { level = 12, species = "DITTO" },
+      } },
+    },
+    SAFARI_ZONE_EAST = {
+      grass = { rate = 30, slots = {
+        { level = 21, species = "NIDORAN_M" },
+        { level = 29, species = "NIDORAN_F" },
+        { level = 22, species = "EXEGGCUTE" },
+        { level = 21, species = "TAUROS" },
+        { level = 32, species = "NIDORINA" },
+        { level = 19, species = "CUBONE" },
+        { level = 26, species = "EXEGGCUTE" },
+        { level = 24, species = "MAROWAK" },
+        { level = 21, species = "CHANSEY" },
+        { level = 15, species = "SCYTHER" },
+      } },
+    },
+    SAFARI_ZONE_NORTH = {
+      grass = { rate = 30, slots = {
+        { level = 36, species = "NIDORAN_M" },
+        { level = 14, species = "NIDORAN_F" },
+        { level = 20, species = "EXEGGCUTE" },
+        { level = 25, species = "RHYHORN" },
+        { level = 23, species = "NIDORINA" },
+        { level = 28, species = "KANGASKHAN" },
+        { level = 16, species = "CUBONE" },
+        { level = 33, species = "KANGASKHAN" },
+        { level = 25, species = "SCYTHER" },
+        { level = 15, species = "PINSIR" },
+      } },
+    },
+    SAFARI_ZONE_WEST = {
+      grass = { rate = 30, slots = {
+        { level = 29, species = "NIDORAN_M" },
+        { level = 21, species = "NIDORAN_F" },
+        { level = 22, species = "EXEGGCUTE" },
+        { level = 21, species = "TAUROS" },
+        { level = 32, species = "NIDORINO" },
+        { level = 19, species = "CUBONE" },
+        { level = 26, species = "EXEGGCUTE" },
+        { level = 24, species = "MAROWAK" },
+        { level = 25, species = "PINSIR" },
+        { level = 27, species = "TANGELA" },
+      } },
+    },
+    SAFARI_ZONE_CENTER = {
+      grass = { rate = 30, slots = {
+        { level = 14, species = "NIDORAN_M" },
+        { level = 36, species = "NIDORAN_F" },
+        { level = 24, species = "EXEGGCUTE" },
+        { level = 20, species = "RHYHORN" },
+        { level = 23, species = "NIDORINO" },
+        { level = 27, species = "PARASECT" },
+        { level = 27, species = "PARAS" },
+        { level = 32, species = "PARASECT" },
+        { level = 22, species = "TANGELA" },
+        { level = 7, species = "CHANSEY" },
+      } },
+    },
+    CERULEAN_CAVE_2F = {
+      grass = { rate = 15, slots = {
+        { level = 52, species = "GOLBAT" },
+        { level = 57, species = "GOLBAT" },
+        { level = 50, species = "GRAVELER" },
+        { level = 56, species = "SANDSLASH" },
+        { level = 50, species = "RHYHORN" },
+        { level = 60, species = "DITTO" },
+        { level = 58, species = "GLOOM" },
+        { level = 58, species = "WEEPINBELL" },
+        { level = 60, species = "RHYDON" },
+        { level = 58, species = "RHYDON" },
+      } },
+    },
+    CERULEAN_CAVE_B1F = {
+      grass = { rate = 25, slots = {
+        { level = 54, species = "GOLBAT" },
+        { level = 59, species = "GOLBAT" },
+        { level = 55, species = "GRAVELER" },
+        { level = 52, species = "RHYHORN" },
+        { level = 62, species = "RHYDON" },
+        { level = 60, species = "DITTO" },
+        { level = 56, species = "CHANSEY" },
+        { level = 65, species = "DITTO" },
+        { level = 55, species = "LICKITUNG" },
+        { level = 50, species = "LICKITUNG" },
+      } },
+    },
+    CERULEAN_CAVE_1F = {
+      grass = { rate = 10, slots = {
+        { level = 50, species = "GOLBAT" },
+        { level = 55, species = "GOLBAT" },
+        { level = 45, species = "GRAVELER" },
+        { level = 55, species = "GLOOM" },
+        { level = 55, species = "WEEPINBELL" },
+        { level = 52, species = "SANDSLASH" },
+        { level = 54, species = "VENOMOTH" },
+        { level = 54, species = "PARASECT" },
+        { level = 55, species = "DITTO" },
+        { level = 60, species = "DITTO" },
+      } },
+    },
+  }
 
-    local function copySlots(slots)
-      local out = {}
-      for i, slot in ipairs(slots or {}) do
-        out[i] = { level = slot.level, species = slot.species }
-      end
-      return out
-    end
+  local YELLOW_SUPER_ROD_TABLES = {
+    CELADON_CITY = {
+      { level = 5, species = "GOLDEEN" },
+      { level = 10, species = "GOLDEEN" },
+      { level = 15, species = "GOLDEEN" },
+      { level = 20, species = "GOLDEEN" },
+    },
+    CERULEAN_CAVE_1F = {
+      { level = 25, species = "GOLDEEN" },
+      { level = 35, species = "SEAKING" },
+      { level = 45, species = "SEAKING" },
+      { level = 55, species = "SEAKING" },
+    },
+    CERULEAN_CAVE_B1F = {
+      { level = 30, species = "GOLDEEN" },
+      { level = 40, species = "SEAKING" },
+      { level = 50, species = "SEAKING" },
+      { level = 60, species = "SEAKING" },
+    },
+    CERULEAN_CITY = {
+      { level = 25, species = "GOLDEEN" },
+      { level = 30, species = "GOLDEEN" },
+      { level = 30, species = "SEAKING" },
+      { level = 40, species = "SEAKING" },
+    },
+    CINNABAR_ISLAND = {
+      { level = 15, species = "STARYU" },
+      { level = 15, species = "TENTACOOL" },
+      { level = 10, species = "STARYU" },
+      { level = 30, species = "TENTACOOL" },
+    },
+    FUCHSIA_CITY = {
+      { level = 5, species = "MAGIKARP" },
+      { level = 10, species = "MAGIKARP" },
+      { level = 15, species = "MAGIKARP" },
+      { level = 15, species = "GYARADOS" },
+    },
+    PALLET_TOWN = {
+      { level = 10, species = "STARYU" },
+      { level = 10, species = "TENTACOOL" },
+      { level = 5, species = "STARYU" },
+      { level = 20, species = "TENTACOOL" },
+    },
+    ROUTE_10 = {
+      { level = 15, species = "KRABBY" },
+      { level = 20, species = "KRABBY" },
+      { level = 10, species = "HORSEA" },
+      { level = 25, species = "KINGLER" },
+    },
+    ROUTE_11 = {
+      { level = 15, species = "TENTACOOL" },
+      { level = 20, species = "TENTACOOL" },
+      { level = 10, species = "TENTACOOL" },
+      { level = 5, species = "HORSEA" },
+    },
+    ROUTE_12 = {
+      { level = 20, species = "HORSEA" },
+      { level = 25, species = "HORSEA" },
+      { level = 25, species = "SEADRA" },
+      { level = 35, species = "SEADRA" },
+    },
+    ROUTE_13 = {
+      { level = 15, species = "HORSEA" },
+      { level = 20, species = "HORSEA" },
+      { level = 10, species = "TENTACOOL" },
+      { level = 20, species = "SEADRA" },
+    },
+    ROUTE_17 = {
+      { level = 5, species = "TENTACOOL" },
+      { level = 15, species = "TENTACOOL" },
+      { level = 25, species = "SHELLDER" },
+      { level = 35, species = "SHELLDER" },
+    },
+    ROUTE_18 = {
+      { level = 15, species = "TENTACOOL" },
+      { level = 20, species = "SHELLDER" },
+      { level = 30, species = "SHELLDER" },
+      { level = 40, species = "SHELLDER" },
+    },
+    ROUTE_19 = {
+      { level = 15, species = "TENTACOOL" },
+      { level = 20, species = "STARYU" },
+      { level = 30, species = "TENTACOOL" },
+      { level = 30, species = "TENTACRUEL" },
+    },
+    ROUTE_20 = {
+      { level = 20, species = "TENTACOOL" },
+      { level = 20, species = "TENTACRUEL" },
+      { level = 30, species = "STARYU" },
+      { level = 40, species = "TENTACRUEL" },
+    },
+    ROUTE_21 = {
+      { level = 15, species = "TENTACOOL" },
+      { level = 20, species = "STARYU" },
+      { level = 30, species = "TENTACOOL" },
+      { level = 30, species = "TENTACRUEL" },
+    },
+    ROUTE_22 = {
+      { level = 5, species = "POLIWAG" },
+      { level = 10, species = "POLIWAG" },
+      { level = 15, species = "POLIWAG" },
+      { level = 15, species = "POLIWHIRL" },
+    },
+    ROUTE_23 = {
+      { level = 25, species = "POLIWAG" },
+      { level = 30, species = "POLIWAG" },
+      { level = 30, species = "POLIWHIRL" },
+      { level = 40, species = "POLIWHIRL" },
+    },
+    ROUTE_24 = {
+      { level = 20, species = "GOLDEEN" },
+      { level = 25, species = "GOLDEEN" },
+      { level = 30, species = "GOLDEEN" },
+      { level = 30, species = "SEAKING" },
+    },
+    ROUTE_25 = {
+      { level = 10, species = "KRABBY" },
+      { level = 15, species = "KRABBY" },
+      { level = 15, species = "KINGLER" },
+      { level = 25, species = "KINGLER" },
+    },
+    ROUTE_4 = {
+      { level = 20, species = "GOLDEEN" },
+      { level = 25, species = "GOLDEEN" },
+      { level = 30, species = "GOLDEEN" },
+      { level = 30, species = "SEAKING" },
+    },
+    ROUTE_6 = {
+      { level = 5, species = "GOLDEEN" },
+      { level = 10, species = "GOLDEEN" },
+      { level = 15, species = "GOLDEEN" },
+      { level = 20, species = "GOLDEEN" },
+    },
+    SAFARI_ZONE_CENTER = {
+      { level = 5, species = "MAGIKARP" },
+      { level = 10, species = "MAGIKARP" },
+      { level = 10, species = "DRATINI" },
+      { level = 15, species = "DRAGONAIR" },
+    },
+    SAFARI_ZONE_EAST = {
+      { level = 5, species = "MAGIKARP" },
+      { level = 10, species = "MAGIKARP" },
+      { level = 15, species = "MAGIKARP" },
+      { level = 15, species = "DRATINI" },
+    },
+    SAFARI_ZONE_NORTH = {
+      { level = 5, species = "MAGIKARP" },
+      { level = 10, species = "MAGIKARP" },
+      { level = 15, species = "MAGIKARP" },
+      { level = 15, species = "DRATINI" },
+    },
+    SAFARI_ZONE_WEST = {
+      { level = 5, species = "MAGIKARP" },
+      { level = 10, species = "MAGIKARP" },
+      { level = 15, species = "MAGIKARP" },
+      { level = 15, species = "DRATINI" },
+    },
+    SEAFOAM_ISLANDS_B3F = {
+      { level = 25, species = "KRABBY" },
+      { level = 20, species = "STARYU" },
+      { level = 35, species = "KINGLER" },
+      { level = 40, species = "STARYU" },
+    },
+    SEAFOAM_ISLANDS_B4F = {
+      { level = 25, species = "KRABBY" },
+      { level = 20, species = "STARYU" },
+      { level = 35, species = "KINGLER" },
+      { level = 40, species = "STARYU" },
+    },
+    VERMILION_CITY = {
+      { level = 15, species = "TENTACOOL" },
+      { level = 20, species = "TENTACOOL" },
+      { level = 10, species = "TENTACOOL" },
+      { level = 5, species = "HORSEA" },
+    },
+    VERMILION_DOCK = {
+      { level = 10, species = "TENTACOOL" },
+      { level = 15, species = "TENTACOOL" },
+      { level = 15, species = "STARYU" },
+      { level = 10, species = "SHELLDER" },
+    },
+  }
 
-    local function normalized(id)
-      return tostring(id or ""):upper():gsub("[^A-Z0-9]+", "_")
-    end
+  local YELLOW_SLOT_WEIGHTS = { 51, 51, 39, 25, 25, 25, 13, 13, 11, 3 }
 
-    -- Yellow-route placements are deliberately separate from the broader
-    -- version-exclusive merge.  Patch a known weighted slot directly instead
-    -- of requiring a duplicated species; this avoids silently doing nothing on
-    -- tables whose ten slots happen to all be distinct.
-    local patched = 0
-    for id, encounter in mod.content.encounters:each() do
-      local key = normalized(id)
-      local grass = encounter.grass
-      if grass and type(grass.slots) == "table" and #grass.slots >= 10 then
-        local slots = copySlots(grass.slots)
-        local changed = false
-        if key == "ROUTE_22" or key:find("ROUTE_22", 1, true) then
-          local has = false
-          for _, slot in ipairs(slots) do if slot.species == "MANKEY" then has = true break end end
-          if not has then
-            -- Slot 6 is a 10%% Gen-I bucket in the standard table: uncommon
-            -- enough to feel like a Yellow placement without becoming a hunt.
-            slots[6].species = "MANKEY"
-            changed = true
-          end
-        elseif key == "VIRIDIAN_FOREST" or key:find("VIRIDIAN_FOREST", 1, true) then
-          local has = false
-          for _, slot in ipairs(slots) do if slot.species == "PIDGEOTTO" then has = true break end end
-          if not has then
-            -- Keep Pidgeotto genuinely rare by using the final 1%% bucket.
-            slots[10].species = "PIDGEOTTO"
-            changed = true
-          end
-        end
-        if changed then
-          mod.content.encounters:patch(id, {
-            grass = { rate = grass.rate, buckets = grass.buckets, slots = slots },
-          })
-          patched = patched + 1
-        end
-      end
-    end
-    mod.log:info("Vanilla+ Yellow route encounters patched %d tables", patched)
+  local function cartIsYellow()
+    local g = mod.game
+    local v = g and g.save and g.save.version
+    if tostring(v or ""):lower():find("yellow", 1, true) ~= nil then return true end
+    local ok, GameVersion = pcall(require, "src.core.GameVersion")
+    return ok and GameVersion and GameVersion.isYellow and GameVersion.isYellow() or false
   end
 
-  applyYellowRouteEncounters()
+  local function speciesPresent(slots)
+    local out = {}
+    for _, slot in ipairs(slots or {}) do out[slot.species] = true end
+    return out
+  end
+
+  -- test106: Wilds of Kanto builds its visible spawn pools directly from
+  -- game.data.encounters.  test105 only merged Yellow at encounter.roll time,
+  -- so classic random encounters saw the added species but Wilds never could.
+  -- Keep a pristine runtime copy for battle RNG, while exposing a merged view
+  -- in game.data.encounters for companion mods that consume the map tables.
+  local YELLOW_NATIVE_RUNTIME = {}
+
+  local function copyEncounterGroup(group)
+    if type(group) ~= "table" then return nil end
+    local out = { rate = group.rate, slots = {} }
+    if type(group.buckets) == "table" then
+      out.buckets = {}
+      for i, v in ipairs(group.buckets) do out.buckets[i] = v end
+    end
+    for i, slot in ipairs(group.slots or {}) do
+      out.slots[i] = { level = slot.level, species = slot.species }
+    end
+    return out
+  end
+
+  local function wildsVisibleYellowGroup(base, yellow)
+    if not yellow then return base end
+    if not (base and type(base.slots) == "table" and #base.slots > 0
+      and (base.rate or 0) > 0) then
+      return copyEncounterGroup(yellow)
+    end
+
+    local out = copyEncounterGroup(base)
+    local present, counts = {}, {}
+    for _, slot in ipairs(out.slots) do
+      present[slot.species] = true
+      counts[slot.species] = (counts[slot.species] or 0) + 1
+    end
+
+    local extras, seenExtra = {}, {}
+    for _, slot in ipairs(yellow.slots or {}) do
+      if slot.species and not present[slot.species] and not seenExtra[slot.species] then
+        extras[#extras + 1] = { species = slot.species, level = slot.level }
+        seenExtra[slot.species] = true
+      end
+    end
+
+    -- Prefer consuming duplicate native slots. This keeps Wilds' visible
+    -- ecology close to the cartridge table without hiding any native species.
+    local remaining = {}
+    for _, extra in ipairs(extras) do
+      local replaceIndex
+      for i = #out.slots, 1, -1 do
+        local sp = out.slots[i].species
+        if (counts[sp] or 0) > 1 then replaceIndex = i break end
+      end
+      if replaceIndex then
+        local old = out.slots[replaceIndex].species
+        counts[old] = counts[old] - 1
+        out.slots[replaceIndex] = { species = extra.species, level = extra.level }
+        counts[extra.species] = 1
+      else
+        remaining[#remaining + 1] = extra
+      end
+    end
+
+    -- A few dense maps can have more unique combined R/B+Yellow species than
+    -- the ten Gen-I slots. Wilds supports custom bucket arrays, so append the
+    -- remaining species and give every visible slot a real share. Vanilla RNG
+    -- still rolls from YELLOW_NATIVE_RUNTIME below, never this presentation pool.
+    if #remaining > 0 then
+      for _, extra in ipairs(remaining) do out.slots[#out.slots + 1] = extra end
+      out.buckets = {}
+      local n = #out.slots
+      for i = 1, n do out.buckets[i] = math.floor((i * 256) / n) end
+      out.buckets[n] = 256
+    end
+    return out
+  end
+
+  local function applyYellowWildsVisibility(game)
+    if not mod.options:get("yellow_route_encounters") or cartIsYellow() then return end
+    game = game or mod.game
+    local encounters = game and game.data and game.data.encounters
+    if type(encounters) ~= "table" then return end
+
+    for mapId, yellowDef in pairs(YELLOW_ENCOUNTER_TABLES) do
+      local enc = encounters[mapId]
+      if type(enc) == "table" then
+        YELLOW_NATIVE_RUNTIME[mapId] = YELLOW_NATIVE_RUNTIME[mapId] or {}
+        for _, kind in ipairs({ "grass", "water" }) do
+          local yellow = yellowDef[kind]
+          if yellow then
+            local snap = YELLOW_NATIVE_RUNTIME[mapId][kind]
+            if snap == nil then
+              snap = { hasBase = enc[kind] ~= nil, group = copyEncounterGroup(enc[kind]) }
+              YELLOW_NATIVE_RUNTIME[mapId][kind] = snap
+            end
+            enc[kind] = wildsVisibleYellowGroup(snap.group, yellow)
+          end
+        end
+      end
+    end
+  end
+
+  if mod.hooks then
+    mod.hooks:wrap("encounter.roll", function(nextFn, encDef, ctx)
+      if not mod.options:get("yellow_route_encounters") or cartIsYellow() then
+        return nextFn(encDef, ctx)
+      end
+      local mapId = ctx and ctx.mapId
+      local terrain = ctx and ctx.terrain
+      local byMap = mapId and YELLOW_ENCOUNTER_TABLES[mapId]
+      local yellow = byMap and byMap[terrain == "water" and "water" or "grass"]
+      if not yellow then return nextFn(encDef, ctx) end
+
+      local native = mapId and YELLOW_NATIVE_RUNTIME[mapId]
+        and YELLOW_NATIVE_RUNTIME[mapId][terrain == "water" and "water" or "grass"]
+      local baseTable = native and native.group or (encDef and encDef.grass)
+      -- Yellow adds several Surf habitats that simply do not exist in Red/Blue
+      -- (Route 6, Routes 12/13, Seafoam B3F/B4F). In that case reproduce the
+      -- Yellow water table exactly, including its encounter rate.
+      if not (baseTable and baseTable.slots and #baseTable.slots > 0 and (baseTable.rate or 0) > 0) then
+        return nextFn({ grass = { rate = yellow.rate, slots = yellow.slots } }, ctx)
+      end
+
+      -- If game.data was expanded for Wilds visibility, never let that
+      -- presentation table silently alter classic encounter probabilities.
+      local rollDef = native and { grass = baseTable } or encDef
+      local rolled = nextFn(rollDef, ctx)
+      if not rolled then return nil end
+
+      local present = speciesPresent(baseTable.slots)
+      local extras, total = {}, 0
+      for i, slot in ipairs(yellow.slots or {}) do
+        if not present[slot.species] then
+          local weight = YELLOW_SLOT_WEIGHTS[i] or 1
+          extras[#extras + 1] = { slot = slot, weight = weight }
+          total = total + weight
+        end
+      end
+      if total <= 0 then return rolled end
+
+      local rng = (ctx and ctx.rng) or love.math.random
+      if rng(1, 256) > total then return rolled end
+      local pick = rng(1, total)
+      for _, extra in ipairs(extras) do
+        pick = pick - extra.weight
+        if pick <= 0 then
+          return { species = extra.slot.species, level = extra.slot.level }
+        end
+      end
+      return rolled
+    end)
+
+    -- Gen-I Super Rod pools use their own field table and encounter hook, so
+    -- water/grass merging cannot affect them.  Add Yellow-only rod species in
+    -- the same current-cart-base fashion, and use Yellow's pool directly when
+    -- the current cart has no Super Rod group for that map.
+    mod.hooks:wrap("encounter.fishing", function(nextFn, rod, mapId, candidates)
+      if rod ~= "SUPER_ROD" or not mod.options:get("yellow_route_encounters")
+        or cartIsYellow() then
+        return nextFn(rod, mapId, candidates)
+      end
+      local yellow = YELLOW_SUPER_ROD_TABLES[mapId]
+      if not yellow then return nextFn(rod, mapId, candidates) end
+      if not candidates or #candidates == 0 then
+        return nextFn(rod, mapId, yellow)
+      end
+
+      local rolled = nextFn(rod, mapId, candidates)
+      if not rolled then return nil end
+      local present = speciesPresent(candidates)
+      local extras = {}
+      for _, slot in ipairs(yellow) do
+        if not present[slot.species] then extras[#extras + 1] = slot end
+      end
+      if #extras == 0 then return rolled end
+
+      -- Super Rod's four source slots are equiprobable conditional on a bite.
+      -- Preserve the current cart's bite mechanics, then devote the same share
+      -- Yellow gave its missing slots to Yellow-only availability.
+      if love.math.random(1, #yellow) <= #extras then
+        local slot = extras[love.math.random(1, #extras)]
+        return { species = slot.species, level = slot.level }
+      end
+      return rolled
+    end)
+  end
 
   local function applyExpandedEncounters()
     if not mod.options:get("expanded_encounters") then return end
@@ -595,33 +1585,121 @@ return function(mod)
   -- Context-sensitive A-button field actions.  world.interacted fires only
   -- after the normal interaction resolver has had first refusal; we act on
   -- kind="none" so NPCs, signs, doors, hidden items and scripts stay vanilla.
-  local gameRef
-  mod.events:on("game.ready", function(ev) gameRef = ev and ev.game end)
+  local gameRef = mod.game
+
+  -- Keep a live Game reference even across in-app mod reloads.  game.ready is
+  -- the normal ownership handoff, while mod.game is the API-supported live
+  -- fallback for a reloaded mod whose custom NPC can be interacted with before
+  -- a cached local has been refreshed.
+  local function vpGame()
+    local g = gameRef
+    if not (g and g.stack) then g = mod.game end
+    if g then gameRef = g end
+    return g
+  end
+
+  local function vpWildsExports()
+    local hit = mod.find and mod.find("overworld_wild_spawns")
+    return hit and hit.exports
+  end
+
+  local function vpSkinWildsPokemon(npc, species, game)
+    if not npc then return end
+    npc.species = species
+    npc.enhancedDexId = species
+    npc.isFollower = npc.vpFollower == true
+    local ex = vpWildsExports()
+    if ex and ex.refreshEntitySprite then
+      pcall(ex.refreshEntitySprite, npc, { game = game or vpGame(), reason = "vanillaplus_companion" })
+    end
+  end
+
+  mod.events:on("game.ready", function(ev)
+    gameRef = (ev and ev.game) or mod.game or gameRef
+  end)
+  mod.events:on("map.entered", function()
+    gameRef = mod.game or gameRef
+  end)
 
   -- Vanilla+ custom dialogue formatter ------------------------------------
-  -- Gen1Recomp dialogue boxes have an 18-glyph line budget.  Earlier
-  -- Vanilla+ NPC text hand-authored conservative \n breaks, which produced
-  -- awkward orphan words and excessive whitespace at slow text speed.
-  -- Keep authored form-feed (\f) beats, but reflow the text inside each
-  -- beat to the real 18-column width so the native TextBox can scroll/page
-  -- naturally just like base-game dialogue.
+  -- Recomp soft-wraps text to the real 18-glyph box width, but an unbroken
+  -- paragraph with more than two wrapped lines uses the engine's scrolling
+  -- path.  Vanilla+ custom NPC dialogue should instead behave like ordinary
+  -- Gen-I pages: two visible lines, blinking prompt, A/B to continue, clear,
+  -- then the next page.  Reflow every authored form-feed beat through the
+  -- engine's own width-aware paginator, then insert a real page break after
+  -- each pair of lines.
   local function vpFormatDialogue(text)
     text = tostring(text or "")
+    local TextBox = require("src.render.TextBox")
     local pages = {}
-    for page in (text .. "\f"):gmatch("(.-)\f") do
-      -- Recomp 0.2.56 already performs width-aware soft wrapping. Vanilla+
-      -- should only remove legacy hand-authored line/scroll breaks and preserve
-      -- deliberate form-feed page beats. Injecting \v here forces an A press
-      -- between otherwise natural wrapped lines, which caused the recent
-      -- Bill/Mom/Mr. Mime/Axe choppy-pagination regression.
-      page = page:gsub("[\r\n\v]+", " ")
+
+    for beat in (text .. "\f"):gmatch("(.-)\f") do
+      beat = beat:gsub("[\r\n\v]+", " ")
                  :gsub("%s+", " ")
                  :gsub("^%s+", "")
                  :gsub("%s+$", "")
-      if page ~= "" then pages[#pages + 1] = page end
+      if beat ~= "" then
+        local wrappedPages = TextBox.paginate(beat, 18)
+        local lines = {}
+        for _, wrappedPage in ipairs(wrappedPages or {}) do
+          for _, line in ipairs(wrappedPage or {}) do
+            if line ~= "" then lines[#lines + 1] = line end
+          end
+        end
+        for i = 1, #lines, 2 do
+          local page = lines[i]
+          if lines[i + 1] then page = page .. "\n" .. lines[i + 1] end
+          pages[#pages + 1] = page
+        end
+      end
     end
+
     if #pages == 0 then return "" end
     return table.concat(pages, "\f")
+  end
+
+  -- Battle defeat text uses BattleState's message renderer, not TextBox.new.
+  -- That renderer honors explicit line breaks but does NOT soft-wrap an
+  -- overlong line. Custom trainer defeat strings deliberately begin on a fresh row
+  -- because Gen1Recomp prepends the trainer class/name (e.g. CHANNELER:).
+  -- Reflow every authored row through TextBox.paginate before handing it to
+  -- BattleState so one shared formatter, rather than per-NPC character shaving,
+  -- owns the width limit for custom trainer defeat text.
+  local function vpFormatBattleDefeatText(text)
+    text = tostring(text or "")
+    local TextBox = require("src.render.TextBox")
+    local outPages = {}
+
+    for page in (text .. "\f"):gmatch("(.-)\f") do
+      if page ~= "" then
+        page = page:gsub("\r", "")
+        local startsFresh = page:sub(1, 1) == "\n" or page:sub(1, 1) == "\v"
+        local wrapped = {}
+        local pos = 1
+        while true do
+          local npos = page:find("[\n\v]", pos)
+          local raw = npos and page:sub(pos, npos - 1) or page:sub(pos)
+          if raw ~= "" then
+            local pages = TextBox.paginate(raw, 18)
+            for _, lines in ipairs(pages) do
+              for _, line in ipairs(lines) do
+                if line ~= "" then wrapped[#wrapped + 1] = line end
+              end
+            end
+          end
+          if not npos then break end
+          pos = npos + 1
+        end
+        if #wrapped > 0 then
+          local body = table.concat(wrapped, "\n")
+          if #outPages == 0 and startsFresh then body = "\n" .. body end
+          outPages[#outPages + 1] = body
+        end
+      end
+    end
+
+    return table.concat(outPages, "\f")
   end
 
 
@@ -729,7 +1807,7 @@ return function(mod)
       TextBox._vanillaPlusRoute8LassPreTest20 = true
     end
 
-    -- Route 8 Lass dynamic post-Champion scaling -----------------------------
+    -- Progressive Leveling prototype (test31) -------------------------------
     -- The exact Route 8 Lass is our guinea pig for the global post-Champion
     -- trainer architecture:
     --   highest player level 55-60 -> 3 mons
@@ -916,8 +1994,8 @@ return function(mod)
 
   -- Lt. Surge post-defeat trash-can Easter egg (test47) -------------------
   -- The lone empty can in Surge's upper room becomes a one-roll reward after
-  -- every eligible Surge defeat. The 15-can switch puzzle downstairs remains
-  -- completely vanilla.
+  -- the original story Surge defeat. The 15-can switch puzzle downstairs
+  -- remains completely vanilla.
   do
     local TextBox = require("src.render.TextBox")
     local VERMILION_GYM_TRASH = "VERMILION_GYM"
@@ -1055,8 +2133,7 @@ return function(mod)
       return found.."Found "..tostring(label).."!"
     end
 
-    -- Arm the original story defeat through the normal battle lifecycle.
-    -- Vermilion battle handler and is armed there below to avoid double-counts.
+    -- Arm the original story defeat exactly once per battle.
     mod.events:on("battle.started",function(ev)
       local battle=ev and ev.battle
       if not battle or battle.kind~="trainer" or battle.oppClass~=SURGE_TRASH_CLASS then return end
@@ -1245,7 +2322,10 @@ return function(mod)
     end
   end
 
-  -- Post-Champion trainer AI -------------------------------------------------
+  -- Public v1.2.3 removed the unfinished test48/test51 pickup modernization.
+  -- Keep that retired subsystem absent so vanilla pickups remain vanilla.
+
+  -- Post-Champion Trainer AI diagnostic (test31) ---------------------------
   -- Test24 proved substantially better move selection and Test25 proved the
   -- six-Pokemon finite-bag / battle-state layer. Test31 retains team management:
   -- matchup-aware replacement after a KO plus conservative voluntary tactical
@@ -1268,6 +2348,10 @@ return function(mod)
     local function isLassTestBattle(battle)
       return battle and battle._vpRoute8LassNpcId ~= nil
         and type(battle._vpLassInventory) == "table"
+    end
+
+    local function isFiniteChampionBattle(battle)
+      return isLassTestBattle(battle)
     end
 
     local function typeMultiplier(moveType, targetTypes)
@@ -1318,6 +2402,7 @@ return function(mod)
       HARDEN = 42,
       WITHDRAW = 42,
       DEFENSE_CURL = 42,
+      BARRIER = 60,
       LIGHT_SCREEN = 60,
       REFLECT = 60,
       MINIMIZE = 58,
@@ -1331,6 +2416,34 @@ return function(mod)
       SONICBOOM = true,
       SUPER_FANG = true,
     }
+
+    local SETUP_STAGE = {
+      SWORDS_DANCE = "attack", AMNESIA = "special", AGILITY = "speed",
+      GROWTH = "special", HARDEN = "defense", WITHDRAW = "defense",
+      DEFENSE_CURL = "defense", BARRIER = "defense",
+      MINIMIZE = "evasion", DOUBLE_TEAM = "evasion",
+    }
+
+    local GEN1_SPECIAL_TYPE = {
+      FIRE=true, WATER=true, GRASS=true, ELECTRIC=true, ICE=true,
+      PSYCHIC=true, DRAGON=true,
+    }
+
+    local function revealedDamageThreats(battle)
+      local target=battle and battle.player
+      local seen=battle and battle._vpSeenPlayerMoves and target and target.mon
+        and battle._vpSeenPlayerMoves[target.mon] or {}
+      local physical,special=0,0
+      for id in pairs(seen or {}) do
+        local def=battle.data and battle.data.moves and battle.data.moves[id]
+        local power=def and tonumber(def.power) or 0
+        if power>0 and not FIXED_DAMAGE[id] then
+          if GEN1_SPECIAL_TYPE[def.type] then special=math.max(special,power)
+          else physical=math.max(physical,power) end
+        end
+      end
+      return physical,special
+    end
 
     local OHKO_MOVE = { FISSURE = true, HORN_DRILL = true, GUILLOTINE = true }
 
@@ -1389,25 +2502,83 @@ return function(mod)
         return 5 + bonus
       end
 
-      -- Do not repeatedly throw major status at an already-statused target.
-      if STATUS_MOVE_SCORE[move.id] then
-        if target and target.mon and target.mon.status then return 8 end
-        return STATUS_MOVE_SCORE[move.id]
+      -- Dream Eater only succeeds against a sleeping target. Treat it as
+      -- unusable otherwise so a sleep-based trainer cannot knowingly waste a turn.
+      if move.id == "DREAM_EATER" then
+        if not (target and target.mon and target.mon.status == "SLP") then return -600 end
       end
 
-      -- Setup has value only while the board permits it. AMNESIA gets an
-      -- additional diagnostic heuristic: Snorlax values it much more against
-      -- a target whose Special exceeds its Attack, and stops stacking once its
-      -- Special stage is already high. This tests situational setup rather
-      -- than "click Amnesia because Amnesia exists."
+      -- Confusion is volatile rather than mon.status in Gen1Recomp. Do not
+      -- waste Confuse Ray/Supersonic while the target is already confused.
+      if move.id == "CONFUSE_RAY" or move.id == "SUPERSONIC" then
+        if target and target.confusedTurns then return -220 end
+        return STATUS_MOVE_SCORE[move.id] or 60
+      end
+
+      -- Do not repeatedly throw major status at an already-statused target.
+      -- A Dream Eater user should actively create its own sleep window instead
+      -- of carrying Hypnosis as decorative furniture while Psychic wins every
+      -- raw score comparison. Once status lands, the ordinary duplicate-status
+      -- guard immediately drops the sleep move back out of contention.
+      if STATUS_MOVE_SCORE[move.id] then
+        if target and target.mon and target.mon.status then return 8 end
+        local score=STATUS_MOVE_SCORE[move.id]
+        if move.id=="HYPNOSIS" or move.id=="SLEEP_POWDER"
+           or move.id=="LOVELY_KISS" or move.id=="SING" or move.id=="SPORE" then
+          local hasDreamEater=false
+          for _,m in ipairs((enemy and enemy.curMoves) or {}) do
+            if m.id=="DREAM_EATER" then hasDreamEater=true break end
+          end
+          if hasDreamEater then score=score+75 end
+        end
+        return score
+      end
+
+      -- Substitute has hard failure conditions in Gen I. Never choose it when
+      -- a doll already exists or when paying 1/4 max HP would consume the
+      -- user's last HP. Viable Substitute remains a situational option rather
+      -- than being removed from the AI entirely.
+      if move.id=="SUBSTITUTE" then
+        if enemy and (enemy.substituteHP or enemy.substitutePending) then return -600 end
+        local cost=math.floor((maxHP or 1)/4)
+        if hp <= cost then return -600 end
+        if hpRatio < 0.40 then return 18 end
+        return hpRatio > 0.72 and 68 or 45
+      end
+
+      -- Setup has value only while the board permits it. Screens are boolean
+      -- Gen I volatiles: recasting an active one always fails, so hard-reject
+      -- that choice. Their first use is matchup-aware, based on attacks the
+      -- player has actually revealed plus the current Pokemon's visible stat
+      -- lean; Light Screen should not outrank real moves against a physical
+      -- Snorlax merely because the button exists.
       if SETUP_MOVE_SCORE[move.id] then
-        local stageName = move.id == "AMNESIA" and "special" or nil
+        if move.id=="LIGHT_SCREEN" and enemy and enemy.lightScreen then return -600 end
+        if move.id=="REFLECT" and enemy and enemy.reflect then return -600 end
+
+        local stageName = SETUP_STAGE[move.id]
         local stage = stageName and ((enemy.stages and enemy.stages[stageName]) or 0) or 0
         if stage >= 4 then return 8 end
         if hpRatio < 0.45 then return 12 end
 
         local base = SETUP_MOVE_SCORE[move.id]
-        if move.id == "AMNESIA" and target and target.mon and target.mon.stats then
+        if move.id=="LIGHT_SCREEN" or move.id=="REFLECT" then
+          local physicalThreat,specialThreat=revealedDamageThreats(battle)
+          local wanted=move.id=="LIGHT_SCREEN" and specialThreat or physicalThreat
+          local other=move.id=="LIGHT_SCREEN" and physicalThreat or specialThreat
+          if wanted>0 then
+            base=base+math.min(70,wanted*0.55)
+            if other>wanted*1.35 then base=base-25 end
+          elseif target and target.mon and target.mon.stats then
+            local ts=target.mon.stats
+            local atk,spec=tonumber(ts.attack) or 0,tonumber(ts.special) or 0
+            local leansRight=(move.id=="LIGHT_SCREEN" and spec>atk*1.20)
+              or (move.id=="REFLECT" and atk>spec*1.20)
+            if leansRight then base=base+12 else base=14 end
+          else
+            base=20
+          end
+        elseif move.id == "AMNESIA" and target and target.mon and target.mon.stats then
           local ts = target.mon.stats
           if (ts.special or 0) > (ts.attack or 0) then base = base + 30
           elseif (ts.attack or 0) > (ts.special or 0) * 1.20 then base = base - 28 end
@@ -1417,6 +2588,48 @@ return function(mod)
         if turn <= 2 and hpRatio > 0.65 then return base + 15 end
         if hpRatio > 0.70 then return base end
         return math.max(20, base - 25)
+      end
+
+      -- Explosion / Self-Destruct are sacrifice tools, not ordinary high-power
+      -- attacks. The old generic power scorer made healthy Electrode detonate
+      -- immediately. Preserve the threat, but make the AI cash the Pokémon in
+      -- only when the trade is tactically sensible.
+      if move.id == "EXPLOSION" or move.id == "SELFDESTRUCT" then
+        local aliveEnemy=0
+        for _,mon in ipairs((battle and battle.enemyParty) or {}) do
+          if (tonumber(mon and mon.hp) or 0)>0 then aliveEnemy=aliveEnemy+1 end
+        end
+        -- Never deliberately erase the trainer's final remaining Pokemon.
+        -- A sacrifice move is a trade tool, not a concede button.
+        if aliveEnemy<=1 then return -600 end
+        local turn = tonumber(battle.turnCount) or 0
+        local targetHP = target and target.mon and tonumber(target.mon.hp) or 1
+        local targetMax = target and target.mon and target.mon.stats and tonumber(target.mon.stats.hp) or targetHP
+        local targetRatio = (targetMax and targetMax > 0) and (targetHP / targetMax) or 1
+
+        -- Never throw away a healthy bomber on the opening turn.
+        if turn <= 1 and hpRatio > 0.35 then return -450 end
+
+        -- If the opponent is already nearly finished, conventional damage is
+        -- almost always a better use of the current Pokémon.
+        if targetRatio <= 0.22 and hpRatio > 0.18 then return 18 end
+
+        -- Healthy Pokémon strongly preserve themselves. At middling HP the
+        -- move remains available, but normal STAB/coverage should outrank it.
+        if hpRatio > 0.70 then return 12 end
+        if hpRatio > 0.50 then return 42 end
+        if hpRatio > 0.35 then return targetRatio >= 0.70 and 86 or 58 end
+
+        -- In the red, Explosion becomes a legitimate trade. It is especially
+        -- attractive against a healthy opposing Pokémon that may KO the user
+        -- before it gets another useful turn.
+        if hpRatio > 0.20 then
+          return targetRatio >= 0.60 and 155 or 112
+        end
+        if hpRatio > 0.10 then
+          return targetRatio >= 0.45 and 205 or 150
+        end
+        return targetRatio >= 0.35 and 240 or 175
       end
 
       if FIXED_DAMAGE[move.id] then
@@ -1480,7 +2693,7 @@ return function(mod)
     -- player's full moveset or the action selected for the current turn.
     mod.events:on("battle.turn_started", function(ev)
       local battle = ev and ev.battle
-      if not isLassTestBattle(battle) then return end
+      if not isFiniteChampionBattle(battle) then return end
       local action = ev.playerAction
       local id = action and action.id
       local mon = battle.player and battle.player.mon
@@ -1589,7 +2802,7 @@ return function(mod)
     end
 
     local function voluntarySwitchAction(battle)
-      if not isLassTestBattle(battle) then return nil end
+      if not isFiniteChampionBattle(battle) then return nil end
       local enemy = battle.enemy
       if not enemy or not enemy.mon or (enemy.mon.hp or 0) <= 0 then return nil end
 
@@ -1634,7 +2847,7 @@ return function(mod)
        and not BattleState._vanillaPlusTest27Replacement then
       local nativeEnemyMonFainted = BattleState.enemyMonFainted
       BattleState.enemyMonFainted = function(battle, ...)
-        if isLassTestBattle(battle) then
+        if isFiniteChampionBattle(battle) then
           local idx, score = bestSwitchCandidate(battle)
           if idx then
             local masked = {}
@@ -1658,16 +2871,21 @@ return function(mod)
       BattleState._vanillaPlusTest27Replacement = true
     end
 
+    local function finiteBag(battle)
+      if not battle then return nil end
+      return battle._vpLassInventory
+    end
+
     local function bagCount(battle, id)
-      local bag = battle and battle._vpLassInventory
+      local bag = finiteBag(battle)
       return (bag and tonumber(bag[id])) or 0
     end
 
     local function spendBag(battle, id)
-      local bag = battle and battle._vpLassInventory
+      local bag = finiteBag(battle)
       if not bag or (bag[id] or 0) <= 0 then return false end
       bag[id] = bag[id] - 1
-      mod.log:info("v1.2.1-test27 Lass spent " .. id .. "; left=" .. tostring(bag[id]))
+      mod.log:info("Vanilla+ postgame trainer spent " .. id .. "; left=" .. tostring(bag[id]))
       return true
     end
 
@@ -1701,6 +2919,9 @@ return function(mod)
     local function lassItemAction(battle)
       local enemy = battle.enemy
       if not enemy or not enemy.mon then return nil end
+      -- No blanket item cooldown: consecutive item turns remain legal when the
+      -- position justifies them, matching what a human opponent could choose.
+      -- Spam control comes from finite inventory plus the tactical thresholds below.
       local hp, maxHP = enemy.mon.hp or 0, enemy.mon.stats and enemy.mon.stats.hp or 1
       local hpRatio = maxHP > 0 and hp / maxHP or 1
       local status = enemy.mon.status
@@ -1709,17 +2930,13 @@ return function(mod)
       -- resurrecting somebody else.
       if bagCount(battle, "FULL_RESTORE") > 0
          and (hpRatio <= 0.27 or (status and hpRatio <= 0.48)) then
-        if spendBag(battle, "FULL_RESTORE") then
-          return { special = "aiItem", item = "FULL_RESTORE" }
-        end
+        return { special = "aiItem", item = "FULL_RESTORE" }
       end
 
       -- Full Heal is for meaningful status when HP does not justify burning a
       -- much more valuable Full Restore.
       if status and bagCount(battle, "FULL_HEAL") > 0 and hpRatio > 0.40 then
-        if spendBag(battle, "FULL_HEAL") then
-          return { special = "aiItem", item = "FULL_HEAL" }
-        end
+        return { special = "aiItem", item = "FULL_HEAL" }
       end
 
       -- X Accuracy is deliberately tied to a *currently viable* OHKO line.
@@ -1728,9 +2945,7 @@ return function(mod)
       if bagCount(battle, "X_ACCURACY") > 0 and not enemy.xAccuracy and hpRatio > 0.38 then
         for _, move in ipairs(enemy.curMoves or {}) do
           if OHKO_MOVE[move.id] and ohkoViable(battle, move) then
-            if spendBag(battle, "X_ACCURACY") then
-              return { special = "aiItem", item = "X_ACCURACY" }
-            end
+            return { special = "aiItem", item = "X_ACCURACY" }
           end
         end
       end
@@ -1741,10 +2956,8 @@ return function(mod)
       local species = enemy.mon.species
       local atkStage = (enemy.stages and enemy.stages.attack) or 0
       if bagCount(battle, "X_ATTACK") > 0 and atkStage <= 0 and hpRatio > 0.68
-         and (species == "SNORLAX" or species == "WIGGLYTUFF") then
-        if spendBag(battle, "X_ATTACK") then
-          return { special = "aiItem", item = "X_ATTACK" }
-        end
+         and (species == "SNORLAX" or species == "WIGGLYTUFF" or species == "AERODACTYL" or species == "GOLEM" or species == "RHYDON" or species == "MAROWAK" or species == "KABUTOPS" or species == "SANDSLASH" or species == "VENUSAUR" or species == "VICTREEBEL" or species == "SCYTHER" or species == "DRAGONITE" or species == "PINSIR" or species == "ARCANINE" or species == "CHARIZARD" or species == "RAPIDASH" or species == "FLAREON" or species == "TAUROS" or species == "KANGASKHAN") then
+        return { special = "aiItem", item = "X_ATTACK" }
       end
 
       -- Reviving costs a whole turn, so do it only from a reasonably safe
@@ -1764,7 +2977,7 @@ return function(mod)
           elseif bagCount(battle, "MAX_REVIVE") > 0 then
             item = "MAX_REVIVE"
           end
-          if item and spendBag(battle, item) then
+          if item then
             battle._vpAIReviveIndex = idx
             return { special = "aiItem", item = item }
           end
@@ -1782,12 +2995,15 @@ return function(mod)
        and not TrainerAI._vanillaPlusTest27Items then
       local nativeUseItem = TrainerAI.useItem
       TrainerAI.useItem = function(battle, item)
-        if isLassTestBattle(battle) and item == "X_ACCURACY" then
+        if isFiniteChampionBattle(battle) then
+          if not spendBag(battle, item) then return {} end
+        end
+        if isFiniteChampionBattle(battle) and item == "X_ACCURACY" then
           battle.enemy.xAccuracy = true
           local trainerName = battle.trainer and battle.trainer.name or "TRAINER"
           return { trainerName .. "\nused X ACCURACY!" }
         end
-        if isLassTestBattle(battle) and (item == "REVIVE" or item == "MAX_REVIVE") then
+        if isFiniteChampionBattle(battle) and (item == "REVIVE" or item == "MAX_REVIVE") then
           local idx = battle._vpAIReviveIndex
           battle._vpAIReviveIndex = nil
           local mon = idx and battle.enemyParty and battle.enemyParty[idx]
@@ -1809,30 +3025,92 @@ return function(mod)
       TrainerAI._vanillaPlusTest27Items = true
     end
 
+    local function chooseFiniteChampionAction(battle)
+      if not isFiniteChampionBattle(battle) then return nil end
+      local locked = battle.lockedAction and battle:lockedAction(battle.enemy)
+      if locked then return locked end
+      local itemAction = lassItemAction(battle)
+      if itemAction then return itemAction end
+      local switchAction = voluntarySwitchAction(battle)
+      if switchAction then return switchAction end
+      local chosen = bestMove(battle)
+      return chosen
+    end
+
+    local function commitFiniteChampionAction(battle)
+      if not isFiniteChampionBattle(battle) then return end
+      battle._vpCommittedEnemyAction = chooseFiniteChampionAction(battle)
+      battle._vpCommittedEnemyOwner = battle.enemy and battle.enemy.mon or nil
+      battle._vpCommittedEnemyIndex = battle.enemyIndex
+    end
+
+    -- A commitment belongs to the exact battler that chose it. Forced
+    -- replacement and voluntary AI switches both emit battler_switched; when
+    -- the enemy changes, discard the old Pokemon's move and immediately commit
+    -- a fresh next-turn action for the new Pokemon. Player switches do NOT
+    -- invalidate the enemy's already-committed same-turn choice, preserving the
+    -- start-of-turn fairness rule.
+    mod.events:on("battle.battler_switched", function(ev)
+      local battle=ev and ev.battle
+      if not isFiniteChampionBattle(battle) then return end
+      local enemySide=battle.sides and battle.sides[2]
+      if ev.side==enemySide or ev.battler==battle.enemy then
+        battle._vpCommittedEnemyAction=nil
+        battle._vpCommittedEnemyOwner=nil
+        battle._vpCommittedEnemyIndex=nil
+        commitFiniteChampionAction(battle)
+      end
+    end)
+
+    -- Gen1Recomp currently asks for the enemy action after a player's ITEM or
+    -- manual SWITCH has already resolved. This finite postgame battle instead commits its
+    -- decision while the command menu is still pending, so it cannot react to
+    -- a status cure, wake-up, or newly switched-in Pokemon in that same turn.
+    mod.events:on("battle.started", function(ev)
+      local battle = ev and ev.battle
+      if isFiniteChampionBattle(battle) then commitFiniteChampionAction(battle) end
+    end)
+    mod.events:on("battle.turn_ended", function(ev)
+      local battle = ev and ev.battle
+      if not isFiniteChampionBattle(battle) then return end
+      commitFiniteChampionAction(battle)
+    end)
+
     if okAI and TrainerAI and mod.hooks then
       mod.hooks:wrap("battle.enemy_action", function(next, battle)
         if not championAIReady(battle) then return next(battle) end
 
-        -- For the Lass stress test we replace her vanilla class-action roll
-        -- with our finite bag reasoning. Forced/locked moves always win first.
-        if isLassTestBattle(battle) then
-          local locked = battle.lockedAction and battle:lockedAction(battle.enemy)
-          if locked then return locked end
-
-          local itemAction = lassItemAction(battle)
-          if itemAction then
-            mod.log:info("v1.2.1-test27 Lass AI chose ITEM " .. tostring(itemAction.item))
-            return itemAction
+        -- Finite postgame decisions are precommitted before the player acts. This is
+        -- especially important for item/switch turns, where current Recomp asks
+        -- for enemy_action only after the player's choice has already resolved.
+        if isFiniteChampionBattle(battle) then
+          local action = battle._vpCommittedEnemyAction
+          local owner = battle._vpCommittedEnemyOwner
+          local ownerIndex = battle._vpCommittedEnemyIndex
+          battle._vpCommittedEnemyAction = nil
+          battle._vpCommittedEnemyOwner = nil
+          battle._vpCommittedEnemyIndex = nil
+          if action and (owner ~= (battle.enemy and battle.enemy.mon)
+             or ownerIndex ~= battle.enemyIndex) then
+            mod.log:info("v1.2.1-test95 discarded stale committed enemy action after battler change")
+            action=nil
           end
-
-          local switchAction = voluntarySwitchAction(battle)
-          if switchAction then return switchAction end
-
-          local chosen, score = bestMove(battle)
-          if chosen then
-            mod.log:info("v1.2.1-test27 Lass AI chose MOVE "
-              .. tostring(chosen.id) .. " score=" .. tostring(score))
-            return chosen
+          if not action then action = chooseFiniteChampionAction(battle) end
+          if action then
+            -- Trainer items are command-phase actions, not ordinary
+            -- speed-ordered moves. Mark this turn so the turn-order hook can
+            -- put a precommitted trainer item ahead of a player's ATTACK.
+            if battle.enemy then
+              battle.enemy._vpFiniteItemPriority = (action.special == "aiItem") or nil
+            end
+            if action.special == "aiItem" then
+              mod.log:info("v1.2.1-test81 finite postgame AI committed ITEM " .. tostring(action.item))
+            elseif action.special == "aiSwitch" then
+              mod.log:info("v1.2.1-test81 finite postgame AI committed SWITCH ->" .. tostring(action.index))
+            else
+              mod.log:info("v1.2.1-test81 finite postgame AI committed MOVE " .. tostring(action.id))
+            end
+            return action
           end
           return next(battle)
         end
@@ -1853,7 +3131,26 @@ return function(mod)
         end
         return vanilla
       end, 50)
+
+      -- test81: if this turn's precommitted finite trainer action is an item,
+      -- resolve it before the player's ordinary attack instead of letting
+      -- Recomp's speed sorter place it after a faster Pokémon.
+      mod.hooks:wrap("battle.turn_order", function(next, playerBattler, playerMove, enemyBattler, enemyMove, ctx)
+        if enemyBattler and enemyBattler._vpFiniteItemPriority then
+          enemyBattler._vpFiniteItemPriority = nil
+          return false
+        end
+        return next(playerBattler, playerMove, enemyBattler, enemyMove, ctx)
+      end)
     end
+
+    -- Player ITEM/SWITCH turns use separate engine paths and never call the
+    -- move turn-order hook. Clear any marker at round end so it cannot leak
+    -- into the following turn.
+    mod.events:on("battle.turn_ended", function(ev)
+      local b = ev and ev.battle
+      if b and b.enemy then b.enemy._vpFiniteItemPriority = nil end
+    end)
   end
 
   -- TELEPORT anywhere: add TELEPORT to the party submenu indoors instead of
@@ -1875,7 +3172,9 @@ return function(mod)
   end)
 
   -- Bill's post-Champion Tradeback machine + discovery flow.
-  -- Unlocks after the player becomes Champion and completes Bill's story.
+  -- Release behavior: unlock after becoming Champion and completing Bill's
+  -- original story sequence. The discovery/dialogue/evolution path remains
+  -- optional through the TRADE EVOLUTION setting.
   do
     local ok, OverworldState = pcall(require, "src.world.OverworldController")
     if ok and OverworldState and not OverworldState._vanillaPlusBillWrapped then
@@ -2113,11 +3412,6 @@ return function(mod)
     local Collision = require("src.world.Collision")
     local followerIndex, chanseyIndex = 97, 98
 
-    local function wildsExports()
-      local hit = mod.find and mod.find("overworld_wild_spawns")
-      return hit and hit.exports
-    end
-
     local function findTagged(ow, tag)
       for _, npc in ipairs(ow and ow.npcs or {}) do
         if npc[tag] then return npc end
@@ -2148,13 +3442,7 @@ return function(mod)
     end
 
     local function skinPokemon(npc, species, game)
-      npc.species = species
-      npc.enhancedDexId = species
-      npc.isFollower = npc.vpFollower == true
-      local ex = wildsExports()
-      if ex and ex.refreshEntitySprite then
-        pcall(ex.refreshEntitySprite, npc, { game = game, reason = "vanillaplus_companion" })
-      end
+      vpSkinWildsPokemon(npc, species, game)
     end
 
     local function makePokemonNPC(game, ow, species, x, y, index, tag)
@@ -3371,8 +4659,475 @@ return function(mod)
     local surfboardActive = false
     local balloonActive = false
 
+    -- Version A Hot Air Balloon travel.  The Toolkit uses the normal Fly
+    -- destination picker/rules, but once a destination is chosen the balloon
+    -- owns its own transition instead of borrowing the bird animation.  The
+    -- approved 40x40 four-shade sprite is registered as an ordinary overworld
+    -- OBJ so Recomp's existing SpriteRenderer/palette/pipeline machinery keys
+    -- white to transparency and makes it look native in every supported color
+    -- mode.  For this first functional pass the player is hidden while riding;
+    -- a combined player+balloon presentation can be layered on later without
+    -- changing the travel state machine.
+    -- Keep the approved production art untouched for the flat renderer.
+    -- test110 adds a separate, exact vertical preflip only for voxel-style
+    -- render pipelines. DRAMALESS currently inverts custom field-effect PNGs
+    -- vertically during its overlay pass; the preflip cancels that transform
+    -- without changing the approved artwork or the normal renderer. Fresh IDs
+    -- also prevent in-app updates from inheriting an older cached definition.
+    local BALLOON_SPRITE_ID = "VP_HOT_AIR_BALLOON_40_T110"
+    local BALLOON_VOXEL_SPRITE_ID = "VP_HOT_AIR_BALLOON_40_VOXEL_T110"
+
+    -- Keep motion tuning on OverworldState rather than only in this chunk's
+    -- local closure.  Vanilla+ is commonly updated in-app during QA; storing
+    -- these values on the class lets a hot reload pick up timing changes
+    -- without inheriting stale constants from an older wrapper.
+    OverworldState._vanillaPlusBalloonMotion = {
+      takeoffHold = 18,   -- ~0.3 s at 60 updates/sec
+      takeoffFrames = 180,
+      landingFrames = 200,
+      landingHold = 18,   -- ~0.3 s settled pause before player returns
+    }
+
+    local function balloonEase(q)
+      q = math.max(0, math.min(1, q or 0))
+      -- Smoothstep: gentle start, quicker middle, gentle finish.  This makes
+      -- the vertical translation read as buoyant motion instead of a sprite
+      -- being dragged at constant speed.
+      return q * q * (3 - 2 * q)
+    end
+
+    local function registerBalloonSprites()
+      if not (gameRef and gameRef.data and gameRef.data.sprites) then return false end
+      local sprites = gameRef.data.sprites
+
+      -- Borrow only the native Fly bird's palette source metadata. The images
+      -- remain dedicated Vanilla+ assets; this keeps both variants on the same
+      -- native OBJ palette path as Fly.
+      local birdDef
+      local okFD, FieldDefaults = pcall(require, "src.world.FieldDefaults")
+      if okFD and FieldDefaults then
+        local birdId = FieldDefaults.fieldValue(gameRef.data, "playerSprites", "fly")
+        birdDef = birdId and sprites[birdId] or nil
+      end
+      birdDef = birdDef or sprites.SPRITE_BIRD
+
+      if not sprites[BALLOON_SPRITE_ID] then
+        sprites[BALLOON_SPRITE_ID] = {
+          id = BALLOON_SPRITE_ID,
+          image = mod.assets:path("assets/balloon_40x40.png"),
+          frames = 1,
+          frameWidth = 40,
+          frameHeight = 40,
+          anchorX = 20,
+          anchorY = 40,
+          walker = false,
+          source = birdDef and birdDef.source or nil,
+          paletteSource = birdDef and (birdDef.paletteSource or birdDef.source) or nil,
+        }
+      end
+
+      if not sprites[BALLOON_VOXEL_SPRITE_ID] then
+        sprites[BALLOON_VOXEL_SPRITE_ID] = {
+          id = BALLOON_VOXEL_SPRITE_ID,
+          image = mod.assets:path("assets/balloon_40x40_voxel.png"),
+          frames = 1,
+          frameWidth = 40,
+          frameHeight = 40,
+          anchorX = 20,
+          anchorY = 40,
+          walker = false,
+          source = birdDef and birdDef.source or nil,
+          paletteSource = birdDef and (birdDef.paletteSource or birdDef.source) or nil,
+        }
+      end
+      return true
+    end
+
+    -- test108: the Balloon is a field-move FX, not an overworld NPC.
+    --
+    -- The old implementation inserted a 32x32 NPC into ow.entities and moved
+    -- its world-space `py` upward. That is fine in the flat renderer, but a
+    -- render pipeline such as Voxel/Dramatics owns entity projection/depth.
+    -- The result was perspective drift, roof/doorway sorting, the Balloon
+    -- phasing through the trainer, and player-hiding disagreement.
+    --
+    -- Recomp already has a render-pipeline-safe path for FLY: ctx.drawFx
+    -- projects the player's ground anchor, then draws the bird as a crisp
+    -- upright 2D field effect. We reuse THAT presentation path while keeping
+    -- Vanilla+'s independent vertical travel state machine. Normal Pokémon
+    -- Fly is untouched.
+    local function removeBalloonActor(ow)
+      -- Cleanup only: an in-app update from test103-107 may still have the
+      -- obsolete runtime NPC alive until the map reloads.
+      local actor = ow and ow.vpBalloonActor
+      if actor then
+        for i = #(ow.entities or {}), 1, -1 do
+          if ow.entities[i] == actor then table.remove(ow.entities, i) end
+        end
+      end
+      if ow then ow.vpBalloonActor = nil end
+    end
+
+    local function balloonScreenDistance()
+      local h = 144
+      if gameRef and gameRef.renderer and gameRef.renderer.worldViewSize then
+        local ok, _, vh = pcall(gameRef.renderer.worldViewSize, gameRef.renderer)
+        if ok and tonumber(vh) then h = tonumber(vh) end
+      end
+      -- Clear the full native 40px sprite beyond the viewport before warping.
+      return math.max(184, math.floor(h + 40))
+    end
+
+    local function installBalloonFx(ow)
+      if not (ow and ow.player and registerBalloonSprites()) then return false end
+      removeBalloonActor(ow)
+
+      local okSR, SpriteRenderer = pcall(require, "src.render.SpriteRenderer")
+      if not (okSR and SpriteRenderer) then return false end
+      local def = gameRef.data.sprites[BALLOON_SPRITE_ID]
+      local voxelDef = gameRef.data.sprites[BALLOON_VOXEL_SPRITE_ID]
+      if not (def and voxelDef) then return false end
+
+      -- Preserve whatever the native Fly renderer had cached. Restoring this
+      -- matters because ordinary party-Pokémon Fly must keep using the bird.
+      ow._vpBalloonPreviousBirdSprite = ow.birdSprite
+      ow._vpBalloonPreviousFlyAnim = ow.flyAnim
+
+      local balloonRenderer = SpriteRenderer.new(def, "VANILLAPLUS_HOT_AIR_BALLOON")
+      local balloonVoxelRenderer = SpriteRenderer.new(voxelDef, "VANILLAPLUS_HOT_AIR_BALLOON_VOXEL")
+
+      -- Both supported 3D overworld renderers identify their world pipeline as
+      -- "voxel".  The iOS LÖVE canvas path mirrors ordinary 2D overlay draws
+      -- vertically relative to the voxel scene: that is why test109 showed the
+      -- Balloon upside-down, test110 revealed a reversed travel axis, and
+      -- test111 still reflected the settled Balloon around screen centre.  Do
+      -- NOT apply that compensation to desktop/Android voxel rendering: the
+      -- renderer source already projects those overlays in normal Y-down space.
+      local okPipelines, Pipelines = pcall(require, "src.render.Pipelines")
+      local okZoom, Zoom = pcall(require, "src.render.Zoom")
+      local function usingVoxelPipeline()
+        if not (okPipelines and Pipelines and Pipelines.worldPipeline) then return false end
+        local ok, id = pcall(Pipelines.worldPipeline)
+        if not ok then
+          ok, id = pcall(Pipelines.worldPipeline, Pipelines)
+        end
+        return ok and id == "voxel"
+      end
+
+      local function runningOnIOS()
+        local ok, osName = pcall(function()
+          return love and love.system and love.system.getOS and love.system.getOS()
+        end)
+        return ok and tostring(osName):lower() == "ios"
+      end
+      local iosDevice = runningOnIOS()
+
+      -- test115 returns to the proven test112 field-FX path: keep the voxel
+      -- renderer's own ctx.drawFx transform, preflip only the Balloon pixels,
+      -- and reverse only the animated Y axis. test113/114 tried bypassing this
+      -- transform and regressed orientation. The only remaining test112 bug was
+      -- the settled anchor being about three tiles too low.
+      --
+      -- DRAMALESS_SHAPE 2.x and PotatoVoxel both export their internal module
+      -- loader as exports.lib.  Read only the projection seam they already use
+      -- for ctx.drawFx; do not patch either third-party renderer.  Because the
+      -- two voxel mods conflict, at most one backend can be live.
+      local voxelBackendChecked, voxelBackend = false, nil
+      local function resolveVoxelBackend()
+        if voxelBackendChecked then return voxelBackend end
+        voxelBackendChecked = true
+        if not (mod and mod.find) then return nil end
+        for _, id in ipairs({ "DRAMALESS_SHAPE", "potato_voxel" }) do
+          local okFind, hit = pcall(mod.find, id)
+          local V = okFind and hit and hit.exports and hit.exports.lib
+          if V and type(V.require) == "function" then
+            local okV3, Voxel3D = pcall(V.require, "Voxel3D")
+            local okAA, AntiAlias = pcall(V.require, "AntiAlias")
+            if okV3 and Voxel3D and type(Voxel3D.project) == "function"
+                and type(Voxel3D.size) == "function" then
+              voxelBackend = {
+                voxel3d = Voxel3D,
+                aa = okAA and AntiAlias or nil,
+              }
+              break
+            end
+          end
+        end
+        return voxelBackend
+      end
+
+      -- ctx.drawFx already translates the flat Fly closure so the player's
+      -- world foot lands at Voxel3D.project(...).  On iOS that 2D overlay is
+      -- presented with its Y axis mirrored, so a point at projected Y = sy
+      -- appears at H-sy.  Pre-shift the closure by H-2*sy (converted from
+      -- canvas pixels back to world-pixel draw units) and the final mirror
+      -- lands on sy again.  This is camera/map/quality-mode independent and is
+      -- why there is deliberately no magic "three tiles upward" constant.
+      local function iosVoxelAnchorShift()
+        if not iosDevice then return 0 end
+        local backend = resolveVoxelBackend()
+        local p = ow and ow.player
+        if not (backend and p) then return 0 end
+        local okP, _, sy = pcall(backend.voxel3d.project,
+                                 p.px + 8, 0, p.py + 16)
+        local okS, _, canvasH = pcall(backend.voxel3d.size)
+        if not (okP and tonumber(sy) and okS and tonumber(canvasH)) then return 0 end
+
+        local scale = 1
+        local g = vpGame()
+        local r = g and g.renderer
+        if okZoom and Zoom and r and r.fitScale then
+          local okF, fit = pcall(r.fitScale, r)
+          if okF and tonumber(fit) and Zoom.scale then
+            local okZ, z = pcall(Zoom.scale, fit)
+            if okZ and tonumber(z) and z > 0 then scale = z end
+          end
+        end
+        local aa = backend.aa
+        if aa and type(aa.factor) == "function" then
+          local okA, factor = pcall(aa.factor)
+          if okA and tonumber(factor) and factor > 0 then scale = scale * factor end
+        end
+        if scale <= 0 then scale = 1 end
+        -- A vertical canvas reflection swaps the sprite's TOP and BOTTOM.
+        -- test112 corrected the reflected foot point but forgot the 40px
+        -- Balloon rectangle itself. Because SpriteRenderer grounds the frame
+        -- 4 world pixels above the Fly foot, the reflected rectangle leaves a
+        -- residual frameHeight + 8 = 48 world pixels: exactly the ~3-tile
+        -- low landing seen in live QA. Add that geometric term here rather
+        -- than a guessed map/tile offset.
+        local frameH = tonumber(balloonVoxelRenderer.frameHeight) or 40
+        local footGap = 4
+        return (tonumber(canvasH) - 2 * tonumber(sy)) / scale
+             + frameH + footGap * 2
+      end
+
+      local proxy = {}
+      function proxy:draw(px, py, camX, camY, ...)
+        local travel = ow.vpBalloonTravel
+        local offsetY = travel and tonumber(travel.offsetY) or 0
+        -- Ignore the bird's facing/flap request. This is a stationary
+        -- single-frame sprite; only the vertical offset animates.
+        local voxel = usingVoxelPipeline()
+        local iosVoxel = voxel and iosDevice
+        local renderer = iosVoxel and balloonVoxelRenderer or balloonRenderer
+        local drawY
+        if iosVoxel then
+          -- Full iOS voxel compensation: pre-mirror the base anchor and the
+          -- animated Y axis.  test110's compatibility texture handles the same
+          -- mirror for the sprite pixels themselves.
+          drawY = py + iosVoxelAnchorShift() - offsetY
+        else
+          drawY = py + offsetY
+        end
+        renderer:draw(px, drawY, camX, camY, "down", 0, false)
+      end
+
+      ow._vpBalloonRenderProxy = proxy
+      ow.birdSprite = proxy
+
+      -- Deliberately arm the engine's Fly-FX render predicate. The instance
+      -- update driver below owns updates while this marker exists, so native
+      -- Fly's side-swoop state machine never advances it. Render pipelines
+      -- already know how to hide the trainer and composite ctx.fx.bird.
+      ow.flyAnim = { phase = "vp_balloon", t = 0, vpBalloon = true }
+      return true
+    end
+
+    local function setBalloonOffset(ow, offsetY)
+      local travel = ow and ow.vpBalloonTravel
+      if travel then travel.offsetY = tonumber(offsetY) or 0 end
+    end
+
+    local function restoreBalloonFx(ow)
+      if not ow then return end
+      -- Restore the exact pre-Balloon cached bird renderer/state. Most of the
+      -- time both are nil, which lets native Fly lazily rebuild its bird.
+      if ow._vpBalloonRenderProxy and ow.birdSprite == ow._vpBalloonRenderProxy then
+        ow.birdSprite = ow._vpBalloonPreviousBirdSprite
+      end
+      if ow.flyAnim and ow.flyAnim.vpBalloon then
+        ow.flyAnim = ow._vpBalloonPreviousFlyAnim
+      end
+      ow._vpBalloonRenderProxy = nil
+      ow._vpBalloonPreviousBirdSprite = nil
+      ow._vpBalloonPreviousFlyAnim = nil
+      removeBalloonActor(ow)
+    end
+
+    -- Wilds can replace the OverworldState class update function after other
+    -- mods load. Install a temporary INSTANCE-local driver at the moment the
+    -- Balloon is used. It shadows whatever class updater Wilds has installed,
+    -- then restores normal dispatch when travel ends.
+    local runBalloonTravelFrame
+    local function ensureBalloonInstanceDriver(ow)
+      if not ow or ow._vpBalloonInstanceDriver then return end
+      local previousRaw = rawget(ow, "update")
+      local inheritedUpdate = ow.update
+      ow._vpBalloonPreviousRawUpdate = previousRaw
+      ow._vpBalloonInstanceDriver = true
+      ow.update = function(self, ...)
+        if self.vpBalloonTravel and runBalloonTravelFrame then
+          return runBalloonTravelFrame(self, ...)
+        end
+        local prior = self._vpBalloonPreviousRawUpdate
+        self._vpBalloonPreviousRawUpdate = nil
+        self._vpBalloonInstanceDriver = nil
+        rawset(self, "update", prior)
+        return inheritedUpdate(self, ...)
+      end
+    end
+
+    local function finishBalloonTravel(ow)
+      if not ow then return end
+      restoreBalloonFx(ow)
+      ow.vpBalloonTravel = nil
+      ow.playerHidden = false
+      if ow.player then ow.player.inputLocked = false end
+      if ow.pikachuWarpHidden and ow.showPikachuAfterWarp then
+        ow:showPikachuAfterWarp()
+      end
+      balloonActive = false
+      if ow._vpBalloonInstanceDriver then
+        local prior = ow._vpBalloonPreviousRawUpdate
+        ow._vpBalloonPreviousRawUpdate = nil
+        ow._vpBalloonInstanceDriver = nil
+        rawset(ow, "update", prior)
+      end
+    end
+
+    local function beginBalloonTravel(ow, dest)
+      if not (ow and ow.player and dest and dest.map) then return false end
+      if ow.vpBalloonTravel or ow.transitioning or ow.flyArrive then return false end
+      if ow.flyAnim and not ow.flyAnim.vpBalloon then return false end
+
+      gameRef.save.onBike = false
+      gameRef.save.forcedBike = nil
+      ow.player.surfing = false
+      if ow.syncSurfingPikachu then ow:syncSurfingPikachu() end
+      if ow.hidePikachuForWarp then ow:hidePikachuForWarp() end
+
+      local distance = balloonScreenDistance()
+      ow.vpBalloonTravel = {
+        phase = "takeoff_hold", t = 0, distance = distance, offsetY = 0,
+        dest = { map = dest.map, x = dest.x, y = dest.y },
+      }
+      if not installBalloonFx(ow) then
+        ow.vpBalloonTravel = nil
+        if ow.showPikachuAfterWarp then ow:showPikachuAfterWarp() end
+        return false
+      end
+      ensureBalloonInstanceDriver(ow)
+      ow.player.inputLocked = true
+      ow.playerHidden = true
+
+      -- Keep the familiar field-move audio cue, but no bird travel state/path
+      -- is created. The dummy flyAnim above exists only as a renderer signal.
+      pcall(function() require("src.core.Music").fadeOut(4) end)
+      pcall(function() require("src.core.Sound").play(gameRef.data, "Fly") end)
+      return true
+    end
+
+    -- Shared balloon frame runner. Vertical motion is expressed as an offset
+    -- inside the built-in Fly FX draw path rather than as an NPC's world Y.
+    -- That makes flat, Tilt and Voxel/Dramatics all render the same upright
+    -- sprite over the player's projected anchor.
+    runBalloonTravelFrame = function(self, ...)
+      local travel = self.vpBalloonTravel
+      if not travel then return end
+
+      local motion = OverworldState._vanillaPlusBalloonMotion or {}
+      local takeoffHold = tonumber(motion.takeoffHold) or 18
+      local takeoffFrames = tonumber(motion.takeoffFrames) or 180
+      local landingFrames = tonumber(motion.landingFrames) or 200
+      local landingHold = tonumber(motion.landingHold) or 18
+
+      -- Keep the render marker alive even if a map transition or another mod
+      -- cleared it. This also gives Voxel the same player-hide predicate as
+      -- native Fly for the entire trip.
+      if not (self.flyAnim and self.flyAnim.vpBalloon) then
+        self.flyAnim = { phase = "vp_balloon", t = 0, vpBalloon = true }
+      end
+      self.playerHidden = true
+
+      if travel.phase == "takeoff_hold" then
+        travel.t = travel.t + 1
+        setBalloonOffset(self, 0)
+        if travel.t >= takeoffHold then
+          travel.phase, travel.t = "takeoff", 0
+        end
+        return
+      end
+
+      if travel.phase == "takeoff" then
+        travel.t = travel.t + 1
+        local q = math.min(1, travel.t / takeoffFrames)
+        local eased = balloonEase(q)
+        setBalloonOffset(self, -math.floor(travel.distance * eased + 0.5))
+        if travel.t >= takeoffFrames then
+          local d = travel.dest
+          travel.phase = "warping"
+          self:startWarpTo(d.map, d.x, d.y, "down", function()
+            local live = self.vpBalloonTravel
+            if not live then return end
+            live.phase, live.t = "landing", 0
+            live.distance = balloonScreenDistance()
+            live.offsetY = -live.distance
+            self.playerHidden = true
+            self.player.inputLocked = true
+            if not (self.flyAnim and self.flyAnim.vpBalloon) then
+              self.flyAnim = { phase = "vp_balloon", t = 0, vpBalloon = true }
+            end
+            pcall(function() require("src.core.Sound").play(gameRef.data, "Fly") end)
+          end)
+        end
+        return
+      end
+
+      if travel.phase == "landing" then
+        travel.t = travel.t + 1
+        local q = math.min(1, travel.t / landingFrames)
+        local eased = balloonEase(q)
+        setBalloonOffset(self, -math.floor(travel.distance * (1 - eased) + 0.5))
+        if travel.t >= landingFrames then
+          travel.phase, travel.t = "landing_hold", 0
+          setBalloonOffset(self, 0)
+        end
+        return
+      end
+
+      if travel.phase == "landing_hold" then
+        travel.t = travel.t + 1
+        setBalloonOffset(self, 0)
+        if travel.t >= landingHold then finishBalloonTravel(self) end
+        return
+      end
+
+      if travel.phase == "warping" then return end
+      finishBalloonTravel(self)
+    end
+
+    -- Distinct hot-reload guard: test106's class wrapper can remain live after
+    -- an in-app mod update. Layer the new runner outside it so test108 takes
+    -- ownership immediately without requiring the user to reinstall Recomp.
+    if not OverworldState._vanillaPlusBalloonTravelWrapped108 then
+      OverworldState._vanillaPlusBalloonTravelWrapped108 = true
+      local previousBalloonUpdate = OverworldState.update
+      function OverworldState:update(...)
+        if self.vpBalloonTravel then return runBalloonTravelFrame(self, ...) end
+        return previousBalloonUpdate(self, ...)
+      end
+    end
+
     local function show(msg, done)
-      gameRef.stack:push(TextBox.new(gameRef, msg, done))
+      local g = vpGame()
+      if not (g and g.stack) then
+        mod.log:warn("Vanilla+ dialogue skipped: live game reference unavailable")
+        if done then done() end
+        return false
+      end
+      g.stack:push(TextBox.new(g, vpFormatDialogue(msg), done))
+      return true
     end
 
     -- Post-Champion Toolkit consolidation. Vanilla scripts keep their real
@@ -3411,7 +5166,12 @@ return function(mod)
     local function toolkitOwns(id) return mod.save:get(toolkitKeyFlag(id)) == true end
     local function isMachineItem(g, id)
       local def = g and g.data and g.data.items and g.data.items[id]
-      return type(def) == "table" and type(def.machine) == "table"
+      if type(def) ~= "table" then return false end
+      -- Recomp 0.2.56 gives machines their own TM_HM pocket.  Treat that
+      -- pocket as authoritative too: companion mods / live reloads can rebuild
+      -- item definitions in an order where the richer `machine` metadata is
+      -- briefly unavailable even though the item is still a real TM/HM.
+      return type(def.machine) == "table" or def.pocket == "TM_HM"
     end
     local function toolkitStoredItem(g, id)
       return TOOLKIT_FISHING_SET[id] or TOOLKIT_EQUIPMENT_SET[id] or TOOLKIT_KEY_SET[id] or isMachineItem(g, id)
@@ -3558,8 +5318,16 @@ return function(mod)
         if id == TOOLKIT_ID then pc[id] = nil
         elseif toolkitStoredItem(g, id) then collect(id, qty); pc[id] = nil end
       end
-      local bagSlots, pcSlots = vpCountPositiveSlots(bag), vpCountPositiveSlots(pc)
-      local BAG_LIMIT, PC_LIMIT = 20, 50
+      local pcSlots = vpCountPositiveSlots(pc)
+      local PC_LIMIT = mod.options:get("expanded_storage") and 100 or 50
+      -- Recomp 0.2.56 uses per-pocket Bag capacities (ITEM / BALL / KEY_ITEM /
+      -- TM_HM), not one global 20-slot cap.  Build a transactional trial save
+      -- and let the engine's Bag.add enforce the correct pocket for each item.
+      -- This also keeps bagOrder coherent if overflow has to return to the Bag.
+      local trialSave = {
+        inventory = bag,
+        bagOrder = vpCopyTable(g.save.bagOrder),
+      }
       local ordered, seen = {}, {}
       local function push(id)
         if packed[id] and not seen[id] then ordered[#ordered+1]=id; seen[id]=true end
@@ -3571,13 +5339,17 @@ return function(mod)
       for _, id in ipairs(rest) do push(id) end
       for _, id in ipairs(ordered) do
         local qty = packed[id]
-        if pc[id] then pc[id] = math.min(99, (tonumber(pc[id]) or 0) + qty)
-        elseif pcSlots < PC_LIMIT then pc[id]=qty; pcSlots=pcSlots+1
-        elseif bag[id] then bag[id] = math.min(99, (tonumber(bag[id]) or 0) + qty)
-        elseif bagSlots < BAG_LIMIT then bag[id]=qty; bagSlots=bagSlots+1
-        else return false, "Your BAG and PC don't have enough free item slots." end
+        if pc[id] then
+          pc[id] = math.min(99, (tonumber(pc[id]) or 0) + qty)
+        elseif pcSlots < PC_LIMIT then
+          pc[id] = qty
+          pcSlots = pcSlots + 1
+        elseif not Bag.add(trialSave, id, qty, g.data) then
+          return false, "Your BAG and PC don't have enough free item slots."
+        end
       end
-      g.save.inventory, g.save.pcItems = bag, pc
+      g.save.inventory, g.save.pcItems = trialSave.inventory, pc
+      g.save.bagOrder = trialSave.bagOrder
       mod.save:set("toolkit_transfer_packed_v1", true)
       mod.save:set("toolkit_received_v1", false)
       mod.save:set("registered_key_item_v1", false)
@@ -3707,13 +5479,15 @@ return function(mod)
     local function useBalloon()
       local ow = gameRef and gameRef.overworld
       if not ow then return end
-      local mapId = ow.map and tostring(ow.map.id or ""):upper() or ""
-      local tileset = ow.map and ow.map.def and tostring(ow.map.def.tileset or ""):upper() or ""
-      -- Route 23's Indigo Plateau exterior uses a non-OVERWORLD tileset even
-      -- though it is an outdoor Fly-capable area. Explicitly allow that map
-      -- without relaxing the restriction for the Plateau lobby or caves.
-      local plateauExterior = (mapId == "ROUTE_23" or mapId == "INDIGO_PLATEAU")
-      if tileset ~= "OVERWORLD" and not plateauExterior then
+      -- Match Recomp's normal Fly location rule: any map the engine considers
+      -- outside is legal; interiors/caves are not.  The balloon itself replaces
+      -- the need for a party Pokemon to know FLY, but does not loosen where Fly
+      -- may be initiated.
+      local okMap, Map = pcall(require, "src.world.Map")
+      local okFD, FieldDefaults = pcall(require, "src.world.FieldDefaults")
+      local outside = okMap and okFD and Map and FieldDefaults and ow.map and ow.map.def
+        and Map.isOutside(ow.map.def, FieldDefaults.field(gameRef.data, "outsideTilesets"))
+      if not outside then
         return show("You can't unpack the\nHOT AIR BALLOON here.")
       end
       local ok, TownMap = pcall(require, "src.ui.TownMap")
@@ -3724,6 +5498,26 @@ return function(mod)
           fly = true,
           onFly = function(mapId)
             closeMenusToOverworld(ow)
+
+            -- TEST100: branch directly from the Toolkit's Town Map callback.
+            -- Older in-app builds can retain an old Toolkit closure even after
+            -- main.lua reloads, which meant the lexical balloonActive flag and
+            -- the newer flyTo wrapper could belong to different script loads.
+            -- Resolve the destination here and enter the balloon state machine
+            -- directly, bypassing that stale-wrapper failure mode entirely.
+            local dest
+            local extra = gameRef and gameRef._vpBalloonFlyTargets
+            if extra then dest = extra[mapId] end
+            if not dest then
+              local spot = gameRef and gameRef.data and gameRef.data.field
+                and gameRef.data.field.flyWarps and gameRef.data.field.flyWarps[mapId]
+              if spot then dest = { map = mapId, x = spot.x, y = spot.y } end
+            end
+            if dest and beginBalloonTravel(ow, dest) then return end
+
+            -- Safety fallback only. If destination resolution ever fails,
+            -- preserve travel instead of trapping the player in the map UI.
+            balloonActive = false
             ow:flyTo(mapId)
           end,
         }))
@@ -4441,6 +6235,22 @@ return function(mod)
       end
     end
 
+    -- TEST100 hot-reload bridge.  ItemEffects.use is a persistent engine-module
+    -- wrapper, so an in-app update can leave it pointing at an older copy of
+    -- openToolkit/useBalloon.  Put one new outer wrapper around it that routes
+    -- TOOLKIT use to this load's functions.  Everything else falls through.
+    if not ItemEffects._vanillaPlusToolkitRefreshTest100 then
+      ItemEffects._vanillaPlusToolkitRefreshTest100 = true
+      local previousToolkitUse100 = ItemEffects.use
+      function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
+        if itemId == TOOLKIT_ID and not battle then
+          openToolkit()
+          return "kept", nil
+        end
+        return previousToolkitUse100(data, save, itemId, target, battle, moveIndex, ow)
+      end
+    end
+
     mod.events:on("map.entered", function()
       if mod.save:get("toolkit_received_v1") then consolidateOwnedKeyItems(gameRef) end
     end)
@@ -4693,7 +6503,8 @@ return function(mod)
     end
 
     local function maybeSpawnMimey()
-      local g, ow = gameRef, gameRef and gameRef.overworld
+      local g = vpGame()
+      local ow = g and g.overworld
       if not (g and ow and ow.map and ow.map.id == "REDS_HOUSE_1F") then return end
       removeTagged(ow, "vpMimey")
       if not mod.options:get("postgame_mimey")
@@ -4705,8 +6516,10 @@ return function(mod)
       if not x then return end
       local mime = addRuntimeNPC(ow, "vpMimey", sprite, x, y, "WALK")
       if mime then
-        mime.species = "MR_MIME"
-        mime.enhancedDexId = "MR_MIME"
+        -- Use the exact same Wilds species-skin handoff as Center Chansey.
+        -- test103 only tagged Mime with MR_MIME but never asked Wilds to refresh
+        -- the runtime entity, so Wilds had no opportunity to render him.
+        vpSkinWildsPokemon(mime, "MR_MIME", g)
         mime.timer = 1
         local nativeUpdate = mime.update
         function mime:update(map, entities)
@@ -4784,7 +6597,9 @@ return function(mod)
         gameRef.save.vpFlashDiag = false
       end
       if ow and not (ow.player and ow.player.surfing) then surfboardActive = false end
-      if balloonActive and ow and not ow.flyAnim then balloonActive = false end
+      if balloonActive and ow and not ow.flyAnim and not ow.vpBalloonTravel then
+        balloonActive = false
+      end
     end)
 
     -- HOTFIX4-DIAG17: player-anchor calibration inside the world pass.
@@ -4792,9 +6607,9 @@ return function(mod)
     -- its native dark state and draw high-contrast markers in the known-good
     -- OverworldState.draw path so we can measure player/camera coordinates.
 
-    -- Lightweight tool presentation. SURFBOARD and BALLOON keep the engine's
-    -- proven movement/Fly systems underneath while adding distinct visual
-    -- cues; flashlight is intentionally generous and cosmetic.
+    -- Lightweight tool presentation. SURFBOARD keeps the engine's proven
+    -- movement path; the BALLOON now owns a dedicated vertical travel state
+    -- above. Flashlight intentionally relies on native FLASH.
     if not OverworldState._vanillaPlusToolkitDrawWrapped then
       OverworldState._vanillaPlusToolkitDrawWrapped = true
       local originalDraw = OverworldState.draw
@@ -5191,7 +7006,7 @@ return function(mod)
       local enc = runtimeEncounter(mapId)
       local group = enc and enc[groupName]
       if not (group and type(group.slots) == "table" and #group.slots > 0) then
-        mod.log:warn("Vanilla+: no %s encounter table for %s", tostring(groupName), tostring(mapId))
+        mod.log:warn("Vanilla+ QA: no %s encounter table for %s", tostring(groupName), tostring(mapId))
         return false
       end
       local slots = copySlots(group.slots)
@@ -5206,7 +7021,7 @@ return function(mod)
       end
       if changed then
         group.slots = slots
-        mod.log:info("Vanilla+: runtime %s encounters updated for %s", tostring(groupName), tostring(mapId))
+        mod.log:info("Vanilla+ QA: runtime %s encounters repaired for %s", tostring(groupName), tostring(mapId))
       end
       return changed
     end
@@ -5227,20 +7042,29 @@ return function(mod)
 
     -- Fossil habitats intentionally cover both walkable cave floor and water.
     -- Seafoam B4F carries the basic fossil lines; Cerulean B1F carries their
-    -- evolved forms. Public rates remain deliberately rare.
+    -- evolved forms. QA slots 1-7 total exactly 90% encounter weight.
     local function repairWildFossils()
       if not mod.options:get("wild_fossils") then return end
       local seafoam = {
+        { slot = 1, species = "OMANYTE" },
+        { slot = 2, species = "KABUTO" },
+        { slot = 3, species = "OMANYTE" },
+        { slot = 4, species = "KABUTO" },
+        { slot = 5, species = "OMANYTE" },
+        { slot = 6, species = "KABUTO" },
         { slot = 7, species = "OMANYTE" },
-        { slot = 8, species = "KABUTO" },
       }
       setGrassSpecies("SEAFOAM_ISLANDS_B4F", seafoam)
       setWaterSpecies("SEAFOAM_ISLANDS_B4F", seafoam)
 
       local cerulean = {
-        { slot = 7, species = "OMASTAR" },
-        { slot = 8, species = "KABUTOPS" },
-        { slot = 10, species = "AERODACTYL" }, -- native 1% encounter slot
+        { slot = 1, species = "AERODACTYL" },
+        { slot = 2, species = "OMASTAR" },
+        { slot = 3, species = "KABUTOPS" },
+        { slot = 4, species = "AERODACTYL" },
+        { slot = 5, species = "OMASTAR" },
+        { slot = 6, species = "KABUTOPS" },
+        { slot = 7, species = "AERODACTYL" },
       }
       setGrassSpecies("CERULEAN_CAVE_B1F", cerulean)
       setWaterSpecies("CERULEAN_CAVE_B1F", cerulean)
@@ -5332,6 +7156,10 @@ return function(mod)
     mod.events:on("game.ready", function()
       repairWildFossils()
       repairYellowRoute17()
+      -- Apply the ALL-CART presentation overlay after runtime fossil repairs
+      -- so Wilds sees both systems and classic RNG snapshots the final native
+      -- current-cart table rather than an earlier pre-repair copy.
+      applyYellowWildsVisibility(mod.game)
       repairMachineNames()
     end)
     mod.events:on("mod.options_changed", function(ev)
@@ -5402,6 +7230,11 @@ return function(mod)
         label = "POWER PLANT", map = "ROUTE_10", x = 6, y = 40,
       },
     }
+    -- Make synthetic destinations visible to the Toolkit callback above.
+    -- Stored on the live game object so hot-reloaded closures all resolve the
+    -- same current table rather than relying on a lexical from one script load.
+    if gameRef then gameRef._vpBalloonFlyTargets = VP_FLY_TARGETS end
+
     local VP_FLY_ORDER = {
       "VP_MT_MOON_CENTER",
       "VP_ROCK_TUNNEL_CENTER",
@@ -5413,13 +7246,33 @@ return function(mod)
     }
 
     -- Teach the real overworld Fly routine about our synthetic destination
-    -- ids while retaining Recomp's proven Fly animation and arrival pipeline.
+    -- ids. Ordinary Pokemon FLY keeps Recomp's native bird animation. The
+    -- Toolkit Hot Air Balloon branches here into its dedicated vertical
+    -- takeoff/landing state machine, for both vanilla and synthetic targets.
     local okFlyOW, FlyOW = pcall(require, "src.world.OverworldController")
-    if okFlyOW and FlyOW and not FlyOW._vanillaPlusExpandedFly then
-      FlyOW._vanillaPlusExpandedFly = true
+    -- TEST99: use a balloon-specific wrapper guard.  Previous builds already
+    -- installed _vanillaPlusExpandedFly in the live Lua module, so reusing that
+    -- guard caused an in-app mod update to skip this newer interception and
+    -- fall straight back to the old bird animation.  A distinct guard lets the
+    -- balloon wrapper layer over the existing expanded-Fly wrapper on hot
+    -- reloads while remaining a single wrapper on a cold launch.
+    if okFlyOW and FlyOW and not FlyOW._vanillaPlusBalloonFlyV1 then
+      FlyOW._vanillaPlusBalloonFlyV1 = true
       local nativeFlyTo = FlyOW.flyTo
       function FlyOW:flyTo(mapId)
         local target = VP_FLY_TARGETS[mapId]
+
+        if balloonActive then
+          local dest = target
+          if not dest then
+            local spot = gameRef and gameRef.data and gameRef.data.field
+              and gameRef.data.field.flyWarps and gameRef.data.field.flyWarps[mapId]
+            if spot then dest = { map = mapId, x = spot.x, y = spot.y } end
+          end
+          if dest and beginBalloonTravel(self, dest) then return end
+          balloonActive = false
+        end
+
         if not target then return nativeFlyTo(self, mapId) end
         local Game = require("src.core.Game")
         Game.save.onBike = false
